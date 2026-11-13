@@ -3179,8 +3179,9 @@ class Game {
           else { c.strokeStyle = st.light; c.lineWidth = Math.max(2.6, cs * .082); c.shadowColor = st.c; c.shadowBlur = 14; }
           stroke(r.pts);
         } else {
-          c.globalAlpha = (orbs ? .68 : .92) * corePulse;
-          c.strokeStyle = '#ffffff';
+          // colour levels: the beam's colour IS the puzzle (filters, twin lasers), so the core stays tinted there instead of white-hot
+          c.globalAlpha = (cm ? (orbs ? .5 : .7) : (orbs ? .68 : .92)) * corePulse;
+          c.strokeStyle = cm ? st.light : '#ffffff';
           c.lineWidth = Math.max(orbs ? 1.1 : 1.5, cs * (orbs ? .02 : .032));
           stroke(r.pts);
         }
