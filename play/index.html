@@ -296,7 +296,8 @@ html,body{font-family:var(--ui);background:#000}
 .chip small{letter-spacing:0;font-weight:500}
 .chip svg,.t-top .chip svg{width:19px;height:19px;display:block}
 .t-top .chip{background:var(--fill2);font-size:15px}
-.t-top .chip.ico,#btnSettings{padding:7px 8px}
+.t-top .chip.ico,#btnSettings,#btnReset{padding:7px 8px}
+.chip.dis{opacity:.38;pointer-events:none}
 .t-top .chip.gemc b{color:var(--wt);font-weight:600}
 .t-top .chip.gemc .plus{background:var(--fill);color:var(--wt);font-weight:600}
 .pill{border:0;background:var(--fill2);font-weight:600}
@@ -423,6 +424,7 @@ html,body{font-family:var(--ui);background:#000}
     <div class="sp"></div>
     <button class="chip" id="btnHearts"><span class="heart">♥</span><b id="hudHearts">5</b><span class="t" id="hudTimer"></span></button>
     <button class="chip" id="btnShop"><span class="gem">✦</span><b id="hudGems">0</b></button>
+    <button class="chip dis" id="btnReset" aria-label="reset"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4.5H15"/></svg></button>
     <button class="chip" id="btnSettings" aria-label="settings"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
   </header>
   <div class="tags" id="tags"></div>
@@ -515,7 +517,7 @@ function traceOnce(L, rots, em, broken, rec, dead) {
   const srow = L.srow == null ? -1 : L.srow, soff = L.soff || 0;
   const e = L.emitters[em], stack = [];
   for (const s0 of [e].concat(L.fixed || [])) { const c0 = s0.col || 7; stack.push({ x: s0.x, y: s0.y, dx: s0.dx, dy: s0.dy, col: c0, h: rec ? [{ x: s0.x, y: s0.y, col: c0 }] : null }); }
-  let guard = 0;
+  let guard = 0, mhit = 0;
   while (stack.length && guard++ < 300) {
     const b = stack.pop();
     let steps = 0;
@@ -546,7 +548,8 @@ function traceOnce(L, rots, em, broken, rec, dead) {
         continue;
       }
       if (k === K.MIRROR) {
-        const st = rots[ref[id]];
+        const mi = ref[id], st = rots[mi];
+        mhit |= (1 << mi);
         if (st === 2) continue;
         if (st === 0) { const t = b.dx; b.dx = b.dy; b.dy = t; }
         else { const t = b.dx; b.dx = -b.dy; b.dy = -t; }
@@ -570,70 +573,88 @@ function traceOnce(L, rots, em, broken, rec, dead) {
     }
   }
   tmask.forEach((m, id) => { if (m === (L.tcol ? L.tcol[id] : 7)) lit.add(id); });
-  return { paths, lit, crys };
+  return { paths, lit, crys, mhit };
 }
 
 /* Crystals gate the glass: when ALL crystals are lit the glass shatters. */
 function evaluate(L, rots, em, rec, dead) {
-  let r = traceOnce(L, rots, em, false, rec, dead);
+  let r = traceOnce(L, rots, em, false, rec, dead), mhit = r.mhit;
   let broken = false;
   if (L.glass.length && L.crystals.length && r.crys.size === L.crystals.length) {
-    broken = true; r = traceOnce(L, rots, em, true, rec, dead);
+    broken = true; r = traceOnce(L, rots, em, true, rec, dead); mhit |= r.mhit;
   }
-  return { win: r.lit.size === L.targets.length, broken, r };
+  return { win: r.lit.size === L.targets.length, broken, r, mhit };
 }
 
 /* ---------- Solver ------------------------------------------------------
-   State = state of each free mirror (2 or 3 values) + emitter slot.
-   Cost  = taps: 1 per binary flip, 0..2 forward taps for tri-state, 1 to pick another emitter slot.
-   (Fragile mirrors never matter to the optimum: an optimal solution taps each mirror at most once.) */
-function solveFrom(L, rots0, em0, dead, off0, frozen) {
+   Beam-driven branch-and-bound: only branches on unlocked mirrors currently
+   touched by the laser beam, pruning any branch that cannot beat `best`.
+   Cost = taps: 1 per binary flip, 0..2 forward taps for tri-state, 1 to pick another emitter slot. */
+function solveFrom(L, rots0, em0, dead, off0, frozen, maxCost) {
   // frozen[i]: a mirror the player can no longer rotate (a fragile mirror whose next tap would shatter it) — it still reflects
   const hasS = L.srow != null && L.srow >= 0, C = L.cols, savedOff = L.soff || 0;
   if (off0 == null) off0 = savedOff;
-  const free = [], radix = [];
+  const free = [], radix = [], mBit = new Int32Array(L.mirrors.length);
   for (let i = 0; i < L.mirrors.length; i++) {
     const m = L.mirrors[i]; if (m.locked || (dead && dead[i]) || (frozen && frozen[i])) continue;
     if (m.link >= 0 && m.link < i) continue;          // a linked pair is ONE unit: a tap flips both
+    const u = free.length, ub = 1 << u;
     free.push(i); radix.push(m.tri ? 3 : 2);
+    mBit[i] = ub; if (m.link >= 0) mBit[m.link] = ub;
   }
-  const nF = free.length, E = L.emitters.length;
-  let total = 1; for (const r of radix) total *= r;
-  const costs = new Uint8Array(total); let maxC = 0;
-  for (let k = 0; k < total; k++) {
-    let x = k, c = 0;
-    for (let j = 0; j < nF; j++) { const r = radix[j], d = x % r; x = (x - d) / r; c += d; }
-    costs[k] = c; if (c > maxC) maxC = c;
+  const E = L.emitters.length, rots = Uint8Array.from(rots0);
+  const limit = maxCost != null ? maxCost + 1 : Infinity;
+  let best = limit, bestRots = null, bestEm = 0, bestOff = off0, curEm = 0, baseC = 0;
+  function search(c, fixedMask) {
+    const ev = evaluate(L, rots, curEm, false, dead);
+    if (ev.win) {
+      best = baseC + c; bestRots = Uint8Array.from(rots); bestEm = curEm; bestOff = L.soff || 0;
+      return;
+    }
+    if (baseC + c + 1 >= best) return;
+    let m = ev.mhit, uhit = 0;
+    while (m) { const b = m & -m; uhit |= mBit[31 - Math.clz32(b)]; m ^= b; }
+    let cand = uhit & ~fixedMask, fMask = fixedMask;
+    while (cand) {
+      const ub = cand & -cand, u = 31 - Math.clz32(ub);
+      cand ^= ub; fMask |= ub;
+      const i = free[u], r = radix[u], r0 = rots0[i], pl = L.mirrors[i].link;
+      if (r === 2) {
+        rots[i] = r0 ^ 1; if (pl >= 0) rots[pl] = rots0[pl] ^ 1;
+        search(c + 1, fMask);
+        rots[i] = r0; if (pl >= 0) rots[pl] = rots0[pl];
+      } else {
+        for (let d = 1; d <= 2; d++) {
+          if (baseC + c + d >= best) break;
+          rots[i] = (r0 + d) % 3;
+          search(c + d, fMask);
+        }
+        rots[i] = r0;
+      }
+      if (baseC + c + 1 >= best) return;
+    }
   }
-  const rots = Uint8Array.from(rots0);
-  let best = Infinity, bestRots = null, bestEm = 0, bestOff = off0;
   for (let oc = 0; oc < (hasS ? C : 1) && oc < best; oc++) {
     if (hasS) L.soff = (off0 + oc) % C;
-    for (let c = 0; c <= maxC && c + oc < best; c++) {
-      for (let k = 0; k < total; k++) {
-        if (costs[k] !== c) continue;
-        let x = k;
-        for (let j = 0; j < nF; j++) { const r = radix[j], d = x % r, i = free[j]; x = (x - d) / r; rots[i] = r === 3 ? (rots0[i] + d) % 3 : rots0[i] ^ d; const pl = L.mirrors[i].link; if (pl >= 0) rots[pl] = rots0[pl] ^ d; }
-        for (let em = 0; em < E; em++) {
-          const cc = c + oc + (em !== em0 ? 1 : 0);
-          if (cc >= best) continue;
-          if (evaluate(L, rots, em, false, dead).win) { best = cc; bestRots = Uint8Array.from(rots); bestEm = em; bestOff = L.soff || 0; }
-        }
-      }
+    for (let ei = 0; ei < E; ei++) {
+      curEm = ei === 0 ? em0 : (ei <= em0 ? ei - 1 : ei);
+      baseC = oc + (curEm !== em0 ? 1 : 0);
+      if (baseC >= best) continue;
+      search(0, 0);
     }
   }
   L.soff = savedOff;
-  return best === Infinity ? null : { min: best, rots: bestRots, em: bestEm, off: bestOff };
+  return best === limit ? null : { min: best, rots: bestRots, em: bestEm, off: bestOff };
 }
 
 /* ---------- Difficulty curve --------------------------------------------
    Rhythm: every 5th level = breather, every 10th = boss, the rest normal.
    New mechanics are introduced one at a time on fixed levels (INTRO).
    Each WORLD (50 levels, cycling every 5 worlds) has a signature mechanic.   */
-const INTRO = { 1: 'basic', 9: 'lock', 16: 'portal', 26: 'glass', 36: 'mover', 51: 'split', 56: 'tri', 71: 'link', 106: 'fragile', 156: 'color', 206: 'grav', 256: 'fog', 306: 'slider', 356: 'twin' };
+const INTRO = { 1: 'basic', 6: 'lock', 16: 'portal', 26: 'glass', 36: 'mover', 51: 'split', 61: 'tri', 71: 'link', 81: 'fragile', 91: 'color', 106: 'grav', 116: 'fog', 126: 'slider', 136: 'twin' };
 const WORLDS_N = 9;   // Nexus, Aurora, Ember, Nebula, Abyss, Mirage, Glacier, Eclipse, Oasis
 const SIG_WORLD = { tri: 1, fragile: 2, color: 3, grav: 4, fog: 5, slider: 6, twin: 7, link: 8 };      // world index (0-based, mod WORLDS_N)
-const SIG_FROM = { link: 74, tri: 58, fragile: 108, color: 158, grav: 208, fog: 258, slider: 308, twin: 358 }; // first level index (0-based) where it may mix with others (after its 3 training levels)
+const SIG_FROM = { tri: 63, link: 73, fragile: 83, color: 93, grav: 108, fog: 118, slider: 128, twin: 138 }; // first level index (0-based) where it may mix with others (after its 3 training levels)
 /* Candy-Crush style onboarding: every new mechanic gets
    step 0 = introduction (tiny, only that mechanic) · step 1-2 = practice (only that mechanic, a bit bigger)
    step 3 = first combination with ONE mechanic the player already knows. Only after that it joins the random mix. */
@@ -692,7 +713,7 @@ function paramsFor(n) {
       if (known.length) feats.add(known[Math.floor(pr() * known.length)]);
     }
   }
-  if (feats.has('twin')) { feats.delete('split'); feats.delete('mover'); feats.delete('color'); }   // twin lasers already use colour
+  if (feats.has('twin')) feats.delete('color');   // twin lasers already use colour; allow twin+mover and twin+split synergies
   const shape = rhythm === 'boss' && i >= 44 ? ['hex', 'cross', 'ring', 'notch'][Math.floor(pr() * 4)] : null;   // boss boards get a silhouette
 
   let decoys = Math.floor(grow * 8 + late * 3 + (rhythm === 'boss' ? 2 : 0) - (rhythm === 'relief' ? 1 : 0) + pr() * 1.5);
@@ -740,16 +761,65 @@ function paramsFor(n) {
     gravCount: drill && tr.f === 'grav' ? 1 + (tr.step > 1 ? 1 : 0) : 1 + (pr() < 0.5 ? 1 : 0) + (grow > 0.6 ? 1 : 0),
     triFrac: drill && tr.f === 'tri' ? 0.9 : 0.5, fragLife: (drill || grow < 0.5 || pr() < 0.6) ? 2 : 1,
     shape, twinTurns: drill ? 1 : 1 + Math.floor(pr() * 3), fogPatches: drill ? 1 : 1 + (grow > 0.6 ? 1 : 0),
-    lo, hi, slack, maxProd: feats.has('slider') ? 2500 : Math.round(16000 * (1 + 2 * late))
+    lo, hi, slack, maxProd: feats.has('slider') ? 8192 : Math.round(65536 * (1 + 2 * late))
   };
 }
 
-/* ---------- Candidate builder (constructive, self-avoiding path) -------- */
+/* ---------- Candidate builder (constructive path with crossings & shared mirrors) -------- */
 function buildCandidate(P, rng) {
   const cols = P.cols, rows = P.rows, N = cols * rows;
-  const used = new Uint8Array(N), reserved = new Uint8Array(N), typ = new Uint8Array(N);
+  const used = new Uint8Array(N), pass = new Uint8Array(N), reserved = new Uint8Array(N), typ = new Uint8Array(N);
   const inB = (x, y) => x >= 0 && y >= 0 && x < cols && y < rows;
   const isFree = (x, y) => inB(x, y) && !used[y * cols + x];
+  const allowCross = P.i >= 18 && !P.train;
+  const canPass = (x, y, db) => {
+    if (!inB(x, y)) return false;
+    const id = y * cols + x;
+    return !used[id] || (allowCross && !typ[id] && pass[id] !== 0 && !(pass[id] & db));
+  };
+  const validRuns = (x, y, dx, dy, maxR) => {
+    const db = dx !== 0 ? 1 : 2, runs = [];
+    for (let s = 1; s <= maxR; s++) {
+      const nx = x + dx * s, ny = y + dy * s;
+      if (isFree(nx, ny)) runs.push(s);
+      if (!canPass(nx, ny, db)) break;
+    }
+    return runs;
+  };
+  const stepRun = (x, y, dx, dy, L, branch) => {
+    const db = dx !== 0 ? 1 : 2;
+    for (let s = 1; s <= L; s++) {
+      x += dx; y += dy; const id = y * cols + x; used[id] = 1;
+      if (s < L) {
+        const crossed = pass[id] !== 0; pass[id] |= db;
+        if (!crossed) { straight.push(id); if (branch >= 0) straightB[branch].push(id); }
+      }
+    }
+    return { x, y, id: y * cols + x };
+  };
+  const trySharedMirror = (x, y, dx, dy, branch) => {
+    if (P.i < 42 || P.train != null) return null;
+    const db = dx !== 0 ? 1 : 2;
+    for (let s = 1; s <= P.maxRun; s++) {
+      const mx = x + dx * s, my = y + dy * s;
+      if (!inB(mx, my)) break;
+      const mid = my * cols + mx;
+      if (typ[mid] === K.MIRROR) {
+        const pm = pathMirrors.find(m => m.id === mid);
+        if (pm && !pm.shared && (dx !== pm.inDx || dy !== pm.inDy) && (dx !== -pm.outDx || dy !== -pm.outDy)) {
+          const nx = pm.rot === 0 ? dy : -dy, ny = pm.rot === 0 ? dx : -dx;
+          if (validRuns(mx, my, nx, ny, P.maxRun).length && rng() < 0.75) {
+            stepRun(x, y, dx, dy, s, branch);
+            pm.shared = true;
+            return { x: mx, y: my, dx: nx, dy: ny };
+          }
+        }
+        break;
+      }
+      if (!canPass(mx, my, db)) break;
+    }
+    return null;
+  };
   const pathMirrors = [], targets = [], portals = [], straight = [], straightB = [[], [], []], splits = [], gravCells = [];
   let curB = 0;
   const vd = new Uint8Array(N);
@@ -763,16 +833,20 @@ function buildCandidate(P, rng) {
 
   function walk(x, y, dx, dy, turns, allowSplit) {
     for (let t = 0; t <= turns; t++) {
-      let maxL = 0; while (isFree(x + dx * (maxL + 1), y + dy * (maxL + 1))) maxL++;
-      if (maxL < 1) return false;
-      const L = 1 + Math.floor(rng() * Math.min(maxL, P.maxRun));
-      for (let s = 1; s <= L; s++) { x += dx; y += dy; used[y * cols + x] = 1; if (s < L) { straight.push(y * cols + x); straightB[curB].push(y * cols + x); } }
-      const id = y * cols + x;
+      if (t < turns && curB === 2) {
+        const sh = trySharedMirror(x, y, dx, dy, curB);
+        if (sh) { x = sh.x; y = sh.y; dx = sh.dx; dy = sh.dy; continue; }
+      }
+      const runs = validRuns(x, y, dx, dy, P.maxRun);
+      if (!runs.length) return false;
+      const L = runs[Math.floor(rng() * runs.length)];
+      const stp = stepRun(x, y, dx, dy, L, curB); x = stp.x; y = stp.y;
+      const id = stp.id;
       if (t === turns) { typ[id] = K.TARGET; targets.push(id); return true; }
 
       if (allowSplit && wantSplit && !st.split && (t === turns - 1 || rng() < 0.55)) {
         const d1x = -dy, d1y = dx, d2x = dy, d2y = -dx;
-        if (isFree(x + d1x, y + d1y) && isFree(x + d2x, y + d2y)) {
+        if (validRuns(x, y, d1x, d1y, P.maxRun).length && validRuns(x, y, d2x, d2y, P.maxRun).length) {
           typ[id] = K.SPLIT; splits.push(id); st.split = true;
           const rem = turns - t - 1;
           curB = 1; const a = walk(x, y, d1x, d1y, Math.ceil(rem / 2), false);
@@ -783,7 +857,7 @@ function buildCandidate(P, rng) {
       if (wantPortal && !st.portal && (t === turns - 1 || rng() < 0.5)) {
         const cands = [];
         for (let cy = 0; cy < rows; cy++) for (let cx = 0; cx < cols; cx++) {
-          if (!used[cy * cols + cx] && Math.abs(cx - x) + Math.abs(cy - y) >= 3 && isFree(cx + dx, cy + dy)) cands.push([cx, cy]);
+          if (!used[cy * cols + cx] && Math.abs(cx - x) + Math.abs(cy - y) >= 3 && validRuns(cx, cy, dx, dy, P.maxRun).length) cands.push([cx, cy]);
         }
         if (cands.length) {
           const [qx, qy] = cands[Math.floor(rng() * cands.length)];
@@ -794,17 +868,17 @@ function buildCandidate(P, rng) {
         }
       }
       if (wantGrav && gravCells.length < P.gravCount && ((gravCells.length === 0 && t >= turns - 1) || rng() < 0.6)) {
-        const o2 = [[-dy, dx, 1], [dy, -dx, -1]].filter(([nx, ny]) => isFree(x + nx, y + ny));
+        const o2 = [[-dy, dx, 1], [dy, -dx, -1]].filter(([nx, ny]) => validRuns(x, y, nx, ny, P.maxRun).length);
         if (o2.length) {
           const [nx, ny, gd] = o2[Math.floor(rng() * o2.length)];
           typ[id] = K.GRAV; gravCells.push({ id, dir: gd }); dx = nx; dy = ny; continue;
         }
       }
-      const opts = [[dy, dx], [-dy, -dx]].filter(([nx, ny]) => isFree(x + nx, y + ny));
+      const opts = [[dy, dx], [-dy, -dx]].filter(([nx, ny]) => validRuns(x, y, nx, ny, P.maxRun).length);
       if (!opts.length) { typ[id] = K.TARGET; targets.push(id); return true; }
       const [nx, ny] = opts[Math.floor(rng() * opts.length)];
       const rot = (dy === nx && dx === ny) ? 0 : 1;
-      typ[id] = K.MIRROR; pathMirrors.push({ id, rot });
+      typ[id] = K.MIRROR; pathMirrors.push({ id, rot, inDx: dx, inDy: dy, outDx: nx, outDy: ny, shared: false });
       dx = nx; dy = ny;
     }
     return true;
@@ -818,47 +892,55 @@ function buildCandidate(P, rng) {
      Light paths are reversible, so the mirrors placed on the way work for the forward beam too. */
   let fixed = [];
   if (wantTwin) {
-    if (targets.length !== 1) return null;
+    if (!targets.length) return null;
     const T = targets[0]; let x = T % cols, y = (T / cols) | 0;
-    const ds = shuffle([[1, 0], [-1, 0], [0, 1], [0, -1]], rng).filter(([a, b]) => isFree(x + a, y + b));
+    const ds = shuffle([[1, 0], [-1, 0], [0, 1], [0, -1]], rng).filter(([a, b]) => validRuns(x, y, a, b, P.maxRun).length);
     if (!ds.length) return null;
     let [dx, dy] = ds[0], done = null;
     for (let t = 0; t <= P.twinTurns && !done; t++) {
-      let maxL = 0; while (isFree(x + dx * (maxL + 1), y + dy * (maxL + 1))) maxL++;
+      if (t < P.twinTurns) {
+        const sh = trySharedMirror(x, y, dx, dy, -1);
+        if (sh) { x = sh.x; y = sh.y; dx = sh.dx; dy = sh.dy; continue; }
+      }
+      const db = dx !== 0 ? 1 : 2;
+      let maxL = 0; while (canPass(x + dx * (maxL + 1), y + dy * (maxL + 1), db)) maxL++;
       if (maxL < 1) return null;
       if (t === P.twinTurns) {
-        if (inB(x + dx * (maxL + 1), y + dy * (maxL + 1))) return null;   // must reach the real edge
-        for (let s2 = 1; s2 <= maxL; s2++) { x += dx; y += dy; used[y * cols + x] = 1; if (s2 < maxL) straight.push(y * cols + x); }
+        if (inB(x + dx * (maxL + 1), y + dy * (maxL + 1)) || !isFree(x + dx * maxL, y + dy * maxL)) return null;   // must reach the real edge on a free cell
+        const stp = stepRun(x, y, dx, dy, maxL, -1); x = stp.x; y = stp.y;
         done = { x, y, dx: -dx, dy: -dy }; break;
       }
-      const Lr = 1 + Math.floor(rng() * Math.min(maxL, P.maxRun));
-      for (let s2 = 1; s2 <= Lr; s2++) { x += dx; y += dy; used[y * cols + x] = 1; if (s2 < Lr) straight.push(y * cols + x); }
-      const id = y * cols + x, opts = [[dy, dx], [-dy, -dx]].filter(([nx, ny]) => isFree(x + nx, y + ny));
+      const runs = validRuns(x, y, dx, dy, P.maxRun);
+      if (!runs.length) return null;
+      const Lr = runs[Math.floor(rng() * runs.length)];
+      const stp = stepRun(x, y, dx, dy, Lr, -1); x = stp.x; y = stp.y;
+      const id = stp.id, opts = [[dy, dx], [-dy, -dx]].filter(([nx, ny]) => validRuns(x, y, nx, ny, P.maxRun).length);
       if (!opts.length) return null;
       const [nx, ny] = opts[Math.floor(rng() * opts.length)];
-      typ[id] = K.MIRROR; pathMirrors.push({ id, rot: (dy === nx && dx === ny) ? 0 : 1 }); dx = nx; dy = ny;
+      typ[id] = K.MIRROR; pathMirrors.push({ id, rot: (dy === nx && dx === ny) ? 0 : 1, inDx: -nx, inDy: -ny, outDx: -dx, outDy: -dy, shared: false }); dx = nx; dy = ny;
     }
     if (!done) return null;
     const pair = shuffle([1, 2, 4], rng); done.col = pair[1]; fixed = [done];
     fixed.mainCol = pair[0];
   }
 
-  /* crystals + glass gate (crystals always earlier in beam order than the glass) */
+  /* crystals + glass gate (crystals always earlier in beam order than the glass; never placed on beam crossings) */
   const crystals = [], glass = [];
+  const straight1 = straight.filter(id => pass[id] !== 3 && !typ[id]);
   if (F.has('glass')) {
-    const k = Math.min(P.crystals, straight.length - 1);
+    const k = Math.min(P.crystals, straight1.length - 1);
     if (k < 1) return null;
-    const g = k + Math.floor(rng() * (straight.length - k));
+    const g = k + Math.floor(rng() * (straight1.length - k));
     const idxs = shuffle(Array.from({ length: g }, (_, q) => q), rng).slice(0, k);
-    for (const q of idxs) { typ[straight[q]] = K.CRYSTAL; crystals.push(straight[q]); }
-    typ[straight[g]] = K.GLASS; glass.push(straight[g]);
+    for (const q of idxs) { typ[straight1[q]] = K.CRYSTAL; crystals.push(straight1[q]); }
+    typ[straight1[g]] = K.GLASS; glass.push(straight1[g]);
   }
 
   /* colour filters (Nebula): the target only lights for the colour the beam arrives with */
   const fcol = new Uint8Array(N), tcol = new Uint8Array(N).fill(7);
-  if (wantTwin) tcol[targets[0]] = fixed.mainCol | fixed[0].col;
+  if (wantTwin) { tcol[targets[0]] = fixed.mainCol | fixed[0].col; for (let k = 1; k < targets.length; k++) tcol[targets[k]] = fixed.mainCol; }
   if (wantColor) {
-    const freeOf = arr => arr.filter(id => !typ[id]);
+    const freeOf = arr => arr.filter(id => !typ[id] && pass[id] !== 3);
     const pick = arr => arr[Math.floor(rng() * arr.length)];
     const put = (id, m) => { typ[id] = K.FILTER; fcol[id] = m; };
     if (splits.length && targets.length === 2) {
@@ -898,8 +980,8 @@ function buildCandidate(P, rng) {
   if (slots.length > 1) { do { initEm = Math.floor(rng() * slots.length); } while (initEm === correctEm); }
 
   /* mirrors on path (some locked / tri-state / fragile), scramble the unlocked ones */
-  const pm = pathMirrors.map(p => ({ id: p.id, x: p.id % cols, y: (p.id / cols) | 0, sol: p.rot, rot: p.rot, locked: false, decoy: false, tri: false, life: null }));
-  for (const m of pm) if (rng() < P.lockRatio) m.locked = true;
+  const pm = pathMirrors.map(p => ({ id: p.id, x: p.id % cols, y: (p.id / cols) | 0, sol: p.rot, rot: p.rot, locked: false, decoy: false, tri: false, life: null, shared: !!p.shared }));
+  for (const m of pm) if (!m.shared && rng() < P.lockRatio) m.locked = true;
   let unl = pm.filter(m => !m.locked);
   if (!unl.length && pm.length) { const m = pm[Math.floor(rng() * pm.length)]; m.locked = false; unl = [m]; }
   if (wantTri && unl.length) { for (const m of unl) if (rng() < P.triFrac) m.tri = true; if (!unl.some(m => m.tri)) unl[Math.floor(rng() * unl.length)].tri = true; }
@@ -962,6 +1044,7 @@ function buildCandidate(P, rng) {
     if (!all0.some(m => m.link >= 0)) return null;
   }
   const mirrors = pm.concat(dec);
+  if (mirrors.length > 31) return null;
   const kind = new Uint8Array(N), ref = new Int16Array(N).fill(-1), gdir = new Int8Array(N);
   for (let q = 0; q < N; q++) kind[q] = vd[q] ? K.VOID : typ[q];
   mirrors.forEach((m, q) => { kind[m.id] = K.MIRROR; ref[m.id] = q; });
@@ -1069,15 +1152,25 @@ function fromHand(H) {
 }
 /* ---------- Curated "special" levels ----------------------------------------
    One level in 20 is picked from a dozen candidates by a trickiness score: the more of the fix happens
-   AWAY from where the beam currently goes (you must see it in your head), the better.                    */
+   AWAY from where the beam currently goes (you must see it in your head), or uses shared mirrors / beam crossings, the better. */
 const CURATE_FROM = 4;
 const isSpecial = n => n > 20 && n % 20 === 13 && !TRAIN[n] && !HAND[n];
 function trickiness(L) {
   const r = evaluate(L, L.initRots, L.initEm, true), seenCells = new Set();
   for (const pa of r.r.paths) for (const q of pa) seenCells.add(Math.round(q.y) * L.cols + Math.round(q.x));
   let far = 0; L.mirrors.forEach((m, i) => { if (L.solRots[i] !== L.initRots[i] && !seenCells.has(m.id)) far++; });
-  const fin = evaluate(L, L.solRots, L.solEm, true); let len = 0; for (const pa of fin.r.paths) len += pa.length;
-  return far * 3 + len / (L.min + 2) + (L.solEm !== L.initEm ? 1 : 0);
+  const fin = evaluate(L, L.solRots, L.solEm, true); let len = 0, cross = 0, sharedM = 0;
+  const visit = new Map();
+  for (const pa of fin.r.paths) {
+    len += pa.length;
+    for (const q of pa) {
+      if (q.x !== Math.round(q.x) || q.y !== Math.round(q.y)) continue;
+      const id = q.y * L.cols + q.x, c = (visit.get(id) || 0) + 1;
+      visit.set(id, c);
+      if (c === 2) { if (L.kind[id] === K.MIRROR) sharedM++; else if (L.kind[id] === K.EMPTY) cross++; }
+    }
+  }
+  return far * 3 + sharedM * 4.5 + cross * 1.5 + len / (L.min + 2) + (L.solEm !== L.initEm ? 1 : 0);
 }
 const _lvlCache = new Map();
 function simplify(P) {
@@ -1218,7 +1311,7 @@ const CFG = {
   STORE_URL: (window.PN_APP && window.PN_APP.storeUrl) || 'https://apps.apple.com/app/id6828459834',   // the Android app sets its Google Play page
   PRIVACY_URL: 'https://bukhaa0s-cyber.github.io/pulse-nexus-site/privacy.html',      // host privacy-policy.html and put its URL here (also required in App Store Connect / Play Console)
   SKIP_AFTER_FAILS: 2, ASSIST_AFTER_FAILS: 2,                           // adaptive difficulty
-  CHEST_EVERY: 10, STARTER_FROM: 7, REWARDED_GRACE_MS: 90000,           // chest cadence, starter-pack trigger, no interstitial right after a rewarded ad
+  CHEST_EVERY: 10, STARTER_FROM: 7, REWARDED_GRACE_MS: 180000,          // chest cadence, starter-pack trigger, 3-minute ad-free grace after any rewarded ad
   ANALYTICS_URL: '',     // POST endpoint for events (sendBeacon); empty = keep locally only
   TUNING_URL: '',        // optional JSON: { "levels": { "47": { "slack": 1 } }, "cfg": { "HINT_COST": 25 } } — re-balance live without an app update
   LEADERBOARD_URL: '',   // optional: GET ?board=ID → [{name,score}] , POST {board,name,score}. Empty = personal records only
@@ -1348,12 +1441,14 @@ Object.assign(STR.ar, {
 Object.assign(STR, {"es":{"signInT":"Inicia sesión para jugar","signInSub":"Tu progreso, gemas y compras se guardan en tu cuenta y te acompañan en cualquier dispositivo.","withApple":"Iniciar sesión con Apple","withGoogle":"Continuar con Google","account":"Cuenta","signOut":"Cerrar sesión","delAcc":"Eliminar cuenta","delSure":"Esto elimina para siempre tu cuenta, progreso y gemas. Las compras no se reembolsan. Toca de nuevo para confirmar.","delDone":"Tu cuenta fue eliminada","signInFail":"No se completó el inicio de sesión. Inténtalo de nuevo.","buyFail":"La compra no se completó","notEnoughShop":"Consigue más gemas en la tienda.","tag_popular":"MÁS POPULAR","restore":"Restaurar compras","restored":"Compras restauradas","noRestore":"No hay compras para restaurar","privacy":"Política de privacidad","cloud":"Guardado en la nube","cloudOn":"Sincronizado","cloudOff":"En la versión de la app","month":"mes","resetKeep":"Los niveles y estrellas se reinician. Se conservan compras, gemas y aspectos.","gemsGot":"+{g} ✦","evR1":"100 ✦","lvl":"NIV","moves":"Movimientos","targets":"Objetivos","undo":"Deshacer","hint":"Pista","winTitle":"Armonía lograda","winSub":"Nivel {n} completado","next":"Siguiente nivel","replay":"Repetir","levels":"Niveles","failTitle":"Sin movimientos","failSub":"El pulso se apagó antes de llegar al núcleo.","contGems":"+{m} movimientos · {c} ✦","contAd":"📺 Ver anuncio · +{m} movimientos","retry":"Reintentar","lostHeart":"−1 ♥ perdido","noHeartsTitle":"Sin corazones","noHeartsSub":"Próximo corazón en {t}","heartAd":"📺 Ver anuncio · +1 ♥","refill":"Rellenar todo · {c} ✦","close":"Cerrar","ok":"Entendido","notEnough":"No tienes suficientes ✦ — visita la tienda","locked":"Este espejo está bloqueado","noSolution":"Sin solución con los movimientos restantes — prueba Deshacer o Reintentar","nothingUndo":"Nada que deshacer","hintDone":"Pista aplicada","shop":"Tienda","shopSub":"Las gemas dan pistas, deshacer y movimientos extra","buy":"Comprar","storeOff":"La tienda aún no está conectada","owned":"Comprado","noAds":"Quitar anuncios","gems":"Gemas","dailyTitle":"Recompensa diaria","dailySub":"Racha de {d} días","claim":"Reclamar","settings":"Ajustes","music":"Música","beam":"Estilo del rayo","round":"Orbes","sharp":"Línea","sound":"Sonido","language":"Idioma","reset":"Borrar progreso","resetSure":"Toca otra vez para confirmar","on":"Sí","off":"No","chooseLevel":"Niveles","current":"Ir al actual","boss":"Jefe","relief":"Respiro","t_lock":"Bloqueado","t_portal":"Portal","t_glass":"Cristal","t_mover":"Emisor móvil","t_split":"Divisor","world":"Mundo","play":"JUGAR","tagline":"Guía la luz. Rompe el cristal.","tipBasicT":"Toca para girar","tipBasic":"Toca un espejo para girarlo y lleva el pulso al objetivo brillante antes de quedarte sin movimientos.","tipLockT":"Espejos bloqueados","tipLock":"Los espejos rojos están bloqueados. Úsalos tal como están: nunca giran.","tipPortalT":"Portales","tipPortal":"Un pulso que entra en un portal sale por su gemelo, en la misma dirección.","tipGlassT":"Cristales y vidrio","tipGlass":"Ilumina cada 💎 cristal y el vidrio se rompe, abriendo paso al pulso.","tipMoverT":"Emisor móvil","tipMover":"Toca un hueco fantasma del borde para mover el láser allí. Moverlo cuesta un movimiento.","tipSplitT":"Divisores","tipSplit":"Un divisor parte el pulso en dos rayos. Ilumina todos los objetivos.","stars3":"¡Perfecto!","t_link":"Enlazados","t_tri":"Triple","t_fog":"Espejismo","t_slider":"Deslizante","t_twin":"Gemelos","t_special":"★ Especial","handmade":"Hecho a mano","t_fragile":"Frágil","t_color":"Colores","t_grav":"Gravedad","broken":"Este espejo está roto","tipFogT":"Espejismo","tipFog":"Algunas casillas están ocultas tras una bruma. Haz pasar el rayo por ellas para ver qué hay debajo.","tipSliderT":"Fila deslizante","tipSlider":"Toca la fila helada para deslizarla un paso a la derecha. Todo lo que hay en ella se mueve junto y da la vuelta.","tipTwinT":"Láseres gemelos","tipTwin":"Dos láseres, dos colores. El objetivo solo se enciende cuando le llegan AMBOS rayos: sus colores se mezclan.","tipLinkT":"Espejos enlazados","tipLink":"Dos espejos unidos por una cadena brillante se mueven juntos: tocar uno gira ambos. ¡Planea el efecto!","tipTriT":"Espejos triples","tipTri":"Los espejos dorados tienen tres estados: \\, / y APAGADO. Cada toque pasa al siguiente.","tipFragileT":"Espejos frágiles","tipFragile":"Los espejos naranjas se agrietan al usarlos. Tócalos demasiadas veces y se convierten en muro.","tipColorT":"Filtros de color","tipColor":"Los filtros tiñen la luz. Un objetivo de color solo se enciende si el rayo llega exactamente de su color.","tipGravT":"Pozos de gravedad","tipGrav":"Un pozo de gravedad dobla cualquier rayo 90° en el sentido de su espiral.","streak":"Racha ×{n}","chestT":"Cofre del tesoro","dbl":"📺 Duplicar · +{g} ✦","dbled":"¡Duplicado! ✓","share":"Compartir","cont":"Continuar","copied":"Imagen guardada","notEnoughT":"Sin gemas","notEnoughSub":"Mira un anuncio corto para conseguir gemas gratis o visita la tienda.","freeGems":"📺 Gemas gratis · +{g} ✦","freeIn":"Gemas gratis en {t}","freeMax":"Más gemas gratis mañana","skip":"📺 Saltar este nivel","starterT":"Pack de inicio","starterSub":"Oferta única · el mejor precio","starterIncl":"600 ✦ + 3 pistas gratis + 3 deshacer gratis + rayo dorado","later":"Quizás luego","skins":"Aspectos del rayo","equip":"Usar","equipped":"En uso","skinNames":{"theme":"Clásico","gold":"Oro","crimson":"Carmesí","ice":"Hielo","rainbow":"Arcoíris","prism":"Prisma"},"dcT":"Desafío diario","dcSub":"Un rompecabezas para todos hoy","dcDone":"Hecho hoy ✓","dcBack":"Vuelve mañana para un nuevo desafío","dcBtn":"☀ Desafío diario","challenge":"Reto","chBanner":"🎯 {name} te reta: nivel {n} en {m} movimientos","wkBanner":"🗓 Supera {m} movimientos en el puzle de esta semana","friend":"Tu amigo","chWin":"¡Ganaste el reto!","chTie":"¡Empate!","chLose":"¡Casi!","chScore":"Tú: {you} movimientos · {name}: {them} movimientos","chSend":"Enviar un reto","chShare":"Resolví el nivel {n} de Pulse Nexus en {m} movimientos. ¿Me superas?","wkShare":"Resolví el puzle semanal de Pulse Nexus en {m} movimientos. ¡Tu turno!","linkCopied":"Enlace del reto copiado","wkT":"Puzle semanal","wkBtn":"🗓 Semanal","wkDone":"Resuelto en {m} movimientos · tu mejor marca esta semana: {b}","recT":"Récords","yourName":"Tu nombre","recLocal":"Récords personales en este dispositivo. Las clasificaciones globales se activan al conectar un servidor.","recGlobal":"Mejores jugadores del mundo — Infinito","evSub":"Quedan {d} días · gana fichas al ganar (1 por estrella)","evR2":"2 de cada potenciador","evR3":"Rayo {s} (exclusivo)","ev_ramadan":"Noches de Ramadán","ev_eidfitr":"Eid al-Fitr","ev_eidadha":"Eid al-Adha","ev_national":"Día Nacional","ev_halloween":"Halloween","ev_newyear":"Año Nuevo","frames":"Marcos del tablero","seasonT":"Pase de temporada","seasonSub":"Quedan {d} días · gana XP jugando","tier":"Nivel","free":"gratis","freeTrack":"Gratis","premium":"Premium","seasonPremT":"Ruta premium","seasonPremIncl":"Recompensas dobles + rayo Prisma y marco Real exclusivos","seasonPremOn":"¡Ruta premium desbloqueada!","seasonOnly":"Exclusivo del pase de temporada","tierUp":"¡Nivel {k} alcanzado!","rescueT":"Pack de rescate","rescueIncl":"250 ✦ + 2 × +3 movimientos + Revelar + Escudo","legendT":"Set legendario","tag_best":"MEJOR PRECIO","tag_limited":"LIMITADO","cbT":"¡Bienvenido de nuevo!","cbSub":"Te echábamos de menos. Aquí tienes un regalo para empezar.","refillShort":"llenos","cbBundle":"Pack de regreso","cbIncl":"800 ✦ + 2 de cada potenciador","fr_world":"Mundo","fr_circuit":"Circuito","fr_frost":"Escarcha","fr_obsidian":"Obsidiana","fr_water":"Agua","fr_mashrabiya":"Mashrabiya","fr_ice":"Hielo","fr_leaves":"Palmera","fr_holo":"Holo","fr_corona":"Corona","fr_royal":"Real","passT":"Pulse Pass","week":"semana","subscribe":"Suscribirse","passIncl":"Sin anuncios · corazones ilimitados · +{g} ✦ cada día","passLeft":"Quedan {d} días","passOn":"Pulse Pass activo — ¡disfruta!","passDrip":"Pulse Pass: +{g} ✦ incluidas","lumiBoss":"¡Nivel jefe! Tú puedes","lumiNew":"¡Oh, algo nuevo!","lumiWin":"¡Genial!|¡Guau!|¡Qué brillo!|¡Lo lograste!|¡Precioso!","lumiLose":"Casi…|¡Otra vez!|¡Podemos hacerlo!","lumiLast":"¡Último movimiento!","lumiHi":"¡Hola! Soy Lumi","mapTitle":"Mapa del mundo","enter":"Entrar al mundo","newWorld":"¡Nuevo mundo desbloqueado!","sigMech":"Novedad:","wt0":"Donde nace la luz","wt1":"Cortinas de luz sobre un cielo helado","wt2":"Cristal forjado en fuego — manéjalo con cuidado","wt3":"La luz se divide en colores","wt4":"La gravedad dobla incluso la luz","wt5":"No todo lo que ves está ahí","wt6":"El hielo se mueve bajo tus pies","wt7":"Dos luces se vuelven una","wt8":"Aquí todo está conectado","cbMode":"Símbolos para daltonismo","boosters":"Potenciadores","b_moves":"+3 movimientos","b_reveal":"Revelar","b_shield":"Escudo","shieldSaved":"🛡 El escudo salvó tu corazón","t_endless":"Infinito","endBtn":"∞ Infinito","endOver":"Fin de la partida","endScore":"{k} etapas","endBest":"Mejor: {b}","newBest":"¡Nuevo récord!","endNew":"∞ Nueva partida · 1 ♥","endLocked":"El modo infinito se desbloquea en el nivel {n}","stage":"Etapa {k}","golden":"Fragmento dorado","goldGot":"¡Fragmento dorado! +{g} ✦","goldCount":"✨ {n} fragmentos dorados","stats":"Estadísticas","bnPerfect":"¡PERFECTO!","bnGreat":"¡GENIAL!","bnClear":"¡SUPERADO!","newMech":"Nuevo","practice":"Práctica {k}/2","assist":"Ayuda: +{n} movimiento(s)","claim2":"📺 Reclamar ×2","shopFree":"Gratis","shieldStreak":"🛡 El escudo mantuvo tu racha","guest":"Jugando como invitado","guestNote":"Guardado solo en este teléfono","saveT":"Guarda tu progreso","saveSub":"Inicia sesión para mantener a salvo tus niveles, gemas y compras y seguir en cualquier dispositivo. Solo un toque.","xtraUnlock":"¡Nuevos modos desbloqueados: Infinito, Puzle semanal y Pase de temporada!","cloudGuest":"Desactivado · inicia sesión para activarlo","level":"Nivel","navMap":"Mapa","gateReach":"Llega al nivel {n}","wStars":"Estrellas en este mundo","adPrivacy":"Privacidad de anuncios","hintAdT":"¿Atascado?","hintAdSub":"Mira un video corto y consigue una pista gratis.","hintAdBtn":"Pista gratis","bossAd":"+3 movimientos gratis para este jefe"},"pt":{"signInT":"Entre para jogar","signInSub":"Seu progresso, gemas e compras ficam salvos na sua conta e acompanham você em qualquer aparelho.","withApple":"Iniciar sessão com a Apple","withGoogle":"Continuar com o Google","account":"Conta","signOut":"Sair","delAcc":"Excluir conta","delSure":"Isso exclui para sempre sua conta, progresso e gemas. Compras não são reembolsadas. Toque de novo para confirmar.","delDone":"Sua conta foi excluída","signInFail":"O login não foi concluído. Tente novamente.","buyFail":"A compra não foi concluída","notEnoughShop":"Consiga mais gemas na loja.","tag_popular":"MAIS POPULAR","restore":"Restaurar compras","restored":"Compras restauradas","noRestore":"Nenhuma compra para restaurar","privacy":"Política de privacidade","cloud":"Salvamento na nuvem","cloudOn":"Sincronizado","cloudOff":"Na versão do app","month":"mês","resetKeep":"Níveis e estrelas recomeçam. Compras, gemas e visuais são mantidos.","gemsGot":"+{g} ✦","evR1":"100 ✦","lvl":"NÍV","moves":"Jogadas","targets":"Alvos","undo":"Desfazer","hint":"Dica","winTitle":"Harmonia alcançada","winSub":"Nível {n} concluído","next":"Próximo nível","replay":"Repetir","levels":"Níveis","failTitle":"Sem jogadas","failSub":"O pulso apagou antes de chegar ao núcleo.","contGems":"+{m} jogadas · {c} ✦","contAd":"📺 Ver anúncio · +{m} jogadas","retry":"Tentar de novo","lostHeart":"−1 ♥ perdido","noHeartsTitle":"Sem corações","noHeartsSub":"Próximo coração em {t}","heartAd":"📺 Ver anúncio · +1 ♥","refill":"Encher tudo · {c} ✦","close":"Fechar","ok":"Entendi","notEnough":"✦ insuficientes — visite a loja","locked":"Este espelho está travado","noSolution":"Sem solução com as jogadas restantes — tente Desfazer ou Tentar de novo","nothingUndo":"Nada para desfazer","hintDone":"Dica aplicada","shop":"Loja","shopSub":"Gemas dão dicas, desfazer e jogadas extras","buy":"Comprar","storeOff":"Loja ainda não conectada","owned":"Adquirido","noAds":"Remover anúncios","gems":"Gemas","dailyTitle":"Recompensa diária","dailySub":"Sequência de {d} dias","claim":"Coletar","settings":"Configurações","music":"Música","beam":"Estilo do raio","round":"Orbes","sharp":"Linha","sound":"Som","language":"Idioma","reset":"Apagar progresso","resetSure":"Toque de novo para confirmar","on":"Ligado","off":"Desligado","chooseLevel":"Níveis","current":"Ir para o atual","boss":"Chefe","relief":"Pausa","t_lock":"Travado","t_portal":"Portal","t_glass":"Vidro","t_mover":"Emissor móvel","t_split":"Divisor","world":"Mundo","play":"JOGAR","tagline":"Guie a luz. Quebre o vidro.","tipBasicT":"Toque para girar","tipBasic":"Toque num espelho para virá-lo e leve o pulso até o alvo brilhante antes que as jogadas acabem.","tipLockT":"Espelhos travados","tipLock":"Espelhos vermelhos estão travados. Use-os como estão: eles nunca giram.","tipPortalT":"Portais","tipPortal":"Um pulso que entra num portal sai pelo portal gêmeo, na mesma direção.","tipGlassT":"Cristais e vidro","tipGlass":"Ilumine todos os 💎 cristais e o vidro se quebra, abrindo caminho para o pulso.","tipMoverT":"Emissor móvel","tipMover":"Toque num espaço fantasma da borda para mover o laser para lá. Mover custa uma jogada.","tipSplitT":"Divisores","tipSplit":"Um divisor parte o pulso em dois raios. Ilumine todos os alvos.","stars3":"Perfeito!","t_link":"Ligados","t_tri":"Triplo","t_fog":"Miragem","t_slider":"Deslizante","t_twin":"Gêmeos","t_special":"★ Especial","handmade":"Feito à mão","t_fragile":"Frágil","t_color":"Cores","t_grav":"Gravidade","broken":"Este espelho está quebrado","tipFogT":"Miragem","tipFog":"Algumas casas estão escondidas numa névoa. Passe o raio por elas para revelar o que há embaixo.","tipSliderT":"Fileira deslizante","tipSlider":"Toque na fileira de gelo para deslizá-la uma casa para a direita. Tudo nela se move junto e dá a volta.","tipTwinT":"Lasers gêmeos","tipTwin":"Dois lasers, duas cores. O alvo só acende quando OS DOIS raios chegam: as cores se misturam.","tipLinkT":"Espelhos ligados","tipLink":"Dois espelhos unidos por uma corrente brilhante se movem juntos: tocar num vira os dois. Planeje o efeito!","tipTriT":"Espelhos triplos","tipTri":"Espelhos dourados têm três estados: \\, / e DESLIGADO. Cada toque passa para o próximo.","tipFragileT":"Espelhos frágeis","tipFragile":"Espelhos laranja racham com o uso. Toque demais e eles viram uma parede!","tipColorT":"Filtros de cor","tipColor":"Filtros tingem a luz. Um alvo colorido só acende se o raio chegar exatamente da sua cor.","tipGravT":"Poços de gravidade","tipGrav":"Um poço de gravidade curva qualquer raio em 90° no sentido da sua espiral.","streak":"Sequência ×{n}","chestT":"Baú do tesouro","dbl":"📺 Dobrar · +{g} ✦","dbled":"Dobrado! ✓","share":"Compartilhar","cont":"Continuar","copied":"Imagem salva","notEnoughT":"Sem gemas","notEnoughSub":"Veja um anúncio curto para ganhar gemas grátis ou visite a loja.","freeGems":"📺 Gemas grátis · +{g} ✦","freeIn":"Gemas grátis em {t}","freeMax":"Mais gemas grátis amanhã","skip":"📺 Pular este nível","starterT":"Pacote inicial","starterSub":"Oferta única · melhor custo-benefício","starterIncl":"600 ✦ + 3 dicas grátis + 3 desfazer grátis + raio dourado","later":"Talvez depois","skins":"Visuais do raio","equip":"Usar","equipped":"Em uso","skinNames":{"theme":"Clássico","gold":"Ouro","crimson":"Carmesim","ice":"Gelo","rainbow":"Arco-íris","prism":"Prisma"},"dcT":"Desafio diário","dcSub":"Um quebra-cabeça para todos hoje","dcDone":"Feito hoje ✓","dcBack":"Volte amanhã para um novo desafio","dcBtn":"☀ Desafio diário","challenge":"Desafio","chBanner":"🎯 {name} desafia você: nível {n} em {m} jogadas","wkBanner":"🗓 Supere {m} jogadas no quebra-cabeça da semana","friend":"Seu amigo","chWin":"Você venceu o desafio!","chTie":"Empate!","chLose":"Quase!","chScore":"Você: {you} jogadas · {name}: {them} jogadas","chSend":"Enviar um desafio","chShare":"Resolvi o nível {n} do Pulse Nexus em {m} jogadas. Consegue me vencer?","wkShare":"Resolvi o quebra-cabeça semanal do Pulse Nexus em {m} jogadas. Sua vez!","linkCopied":"Link do desafio copiado","wkT":"Quebra-cabeça semanal","wkBtn":"🗓 Semanal","wkDone":"Resolvido em {m} jogadas · seu melhor desta semana: {b}","recT":"Recordes","yourName":"Seu nome","recLocal":"Recordes pessoais neste aparelho. Os rankings globais ligam quando um servidor for conectado.","recGlobal":"Melhores do mundo — Infinito","evSub":"Faltam {d} dias · ganhe fichas vencendo (1 por estrela)","evR2":"2 de cada reforço","evR3":"Raio {s} (exclusivo)","ev_ramadan":"Noites de Ramadã","ev_eidfitr":"Eid al-Fitr","ev_eidadha":"Eid al-Adha","ev_national":"Dia Nacional","ev_halloween":"Halloween","ev_newyear":"Ano Novo","frames":"Molduras do tabuleiro","seasonT":"Passe de temporada","seasonSub":"Faltam {d} dias · ganhe XP jogando","tier":"Nível","free":"grátis","freeTrack":"Grátis","premium":"Premium","seasonPremT":"Trilha premium","seasonPremIncl":"Recompensas em dobro + raio Prisma e moldura Real exclusivos","seasonPremOn":"Trilha premium desbloqueada!","seasonOnly":"Exclusivo do passe de temporada","tierUp":"Nível {k} alcançado!","rescueT":"Pacote de resgate","rescueIncl":"250 ✦ + 2 × +3 jogadas + Revelar + Escudo","legendT":"Conjunto lendário","tag_best":"MELHOR OFERTA","tag_limited":"LIMITADO","cbT":"Bem-vindo de volta!","cbSub":"Sentimos sua falta. Aqui vai um presente para recomeçar.","refillShort":"cheios","cbBundle":"Pacote de retorno","cbIncl":"800 ✦ + 2 de cada reforço","fr_world":"Mundo","fr_circuit":"Circuito","fr_frost":"Geada","fr_obsidian":"Obsidiana","fr_water":"Água","fr_mashrabiya":"Muxarabi","fr_ice":"Gelo","fr_leaves":"Palmeira","fr_holo":"Holo","fr_corona":"Coroa solar","fr_royal":"Real","passT":"Pulse Pass","week":"semana","subscribe":"Assinar","passIncl":"Sem anúncios · corações ilimitados · +{g} ✦ por dia","passLeft":"Faltam {d} dias","passOn":"Pulse Pass ativo — aproveite!","passDrip":"Pulse Pass: +{g} ✦ incluídas","lumiBoss":"Nível chefe! Você consegue","lumiNew":"Uau, algo novo!","lumiWin":"Brilhante!|Uau!|Que brilho!|Mandou bem!|Lindo!","lumiLose":"Quase…|De novo!|A gente consegue!","lumiLast":"Última jogada!","lumiHi":"Oi! Eu sou o Lumi","mapTitle":"Mapa do mundo","enter":"Entrar no mundo","newWorld":"Novo mundo desbloqueado!","sigMech":"Novidade:","wt0":"Onde a luz começa","wt1":"Cortinas de luz sobre um céu gelado","wt2":"Vidro forjado no fogo — cuidado","wt3":"A luz se divide em cores","wt4":"A gravidade curva até a luz","wt5":"Nem tudo o que você vê está lá","wt6":"O gelo se move sob você","wt7":"Duas luzes viram uma","wt8":"Aqui tudo está conectado","cbMode":"Símbolos para daltonismo","boosters":"Reforços","b_moves":"+3 jogadas","b_reveal":"Revelar","b_shield":"Escudo","shieldSaved":"🛡 O escudo salvou seu coração","t_endless":"Infinito","endBtn":"∞ Infinito","endOver":"Fim da partida","endScore":"{k} etapas","endBest":"Melhor: {b}","newBest":"Novo recorde!","endNew":"∞ Nova partida · 1 ♥","endLocked":"O modo infinito abre no nível {n}","stage":"Etapa {k}","golden":"Fragmento dourado","goldGot":"Fragmento dourado! +{g} ✦","goldCount":"✨ {n} fragmentos dourados","stats":"Estatísticas","bnPerfect":"PERFEITO!","bnGreat":"ÓTIMO!","bnClear":"CONCLUÍDO!","newMech":"Novo","practice":"Treino {k}/2","assist":"Ajuda: +{n} jogada(s)","claim2":"📺 Coletar ×2","shopFree":"Grátis","shieldStreak":"🛡 O escudo manteve sua sequência","guest":"Jogando como convidado","guestNote":"Salvo só neste celular","saveT":"Salve seu progresso","saveSub":"Entre para manter seus níveis, gemas e compras seguros e continuar em qualquer aparelho. É só um toque.","xtraUnlock":"Novos modos liberados: Infinito, Quebra-cabeça semanal e Passe de temporada!","cloudGuest":"Desligado · entre para ativar","level":"Nível","navMap":"Mapa","gateReach":"Chegue ao nível {n}","wStars":"Estrelas neste mundo","adPrivacy":"Privacidade de anúncios","hintAdT":"Travou?","hintAdSub":"Assista a um vídeo curto e ganhe uma dica grátis.","hintAdBtn":"Dica grátis","bossAd":"+3 movimentos grátis neste chefe"},"hi":{"signInT":"खेलने के लिए साइन इन करें","signInSub":"आपकी प्रगति, रत्न और खरीदारी आपके खाते में सेव होती हैं और हर डिवाइस पर आपके साथ रहती हैं।","withApple":"Apple से साइन इन करें","withGoogle":"Google के साथ जारी रखें","account":"खाता","signOut":"साइन आउट","delAcc":"खाता हटाएं","delSure":"इससे आपका खाता, प्रगति और रत्न हमेशा के लिए हट जाएंगे। खरीदारी का रिफंड नहीं होगा। पुष्टि के लिए फिर से टैप करें।","delDone":"आपका खाता हटा दिया गया","signInFail":"साइन इन पूरा नहीं हुआ। फिर से कोशिश करें।","buyFail":"खरीदारी पूरी नहीं हुई","notEnoughShop":"दुकान से और रत्न पाएं।","tag_popular":"सबसे लोकप्रिय","restore":"खरीदारी पुनर्स्थापित करें","restored":"खरीदारी पुनर्स्थापित हो गई","noRestore":"पुनर्स्थापित करने के लिए कोई खरीदारी नहीं","privacy":"गोपनीयता नीति","cloud":"क्लाउड सेव","cloudOn":"सिंक हो गया","cloudOff":"ऐप संस्करण में","month":"महीना","resetKeep":"लेवल और सितारे फिर से शुरू होंगे। खरीदारी, रत्न और स्किन बने रहेंगे।","gemsGot":"+{g} ✦","evR1":"100 ✦","lvl":"स्तर","moves":"चालें","targets":"लक्ष्य","undo":"वापस","hint":"संकेत","winTitle":"तालमेल पूरा","winSub":"स्तर {n} पूरा","next":"अगला स्तर","replay":"फिर से","levels":"स्तर","failTitle":"चालें खत्म","failSub":"पल्स कोर तक पहुँचने से पहले बुझ गया।","contGems":"+{m} चालें · {c} ✦","contAd":"📺 विज्ञापन देखें · +{m} चालें","retry":"फिर कोशिश","lostHeart":"−1 ♥ गया","noHeartsTitle":"दिल खत्म","noHeartsSub":"अगला दिल {t} में","heartAd":"📺 विज्ञापन देखें · +1 ♥","refill":"सब भरें · {c} ✦","close":"बंद करें","ok":"समझ गया","notEnough":"✦ कम हैं — दुकान पर जाएँ","locked":"यह दर्पण लॉक है","noSolution":"बची चालों में हल नहीं — वापस या फिर कोशिश करें","nothingUndo":"वापस करने को कुछ नहीं","hintDone":"संकेत लगाया गया","shop":"दुकान","shopSub":"रत्नों से संकेत, वापस और अतिरिक्त चालें मिलती हैं","buy":"खरीदें","storeOff":"दुकान अभी जुड़ी नहीं है","owned":"आपके पास है","noAds":"विज्ञापन हटाएँ","gems":"रत्न","dailyTitle":"दैनिक इनाम","dailySub":"लगातार {d} दिन","claim":"लें","settings":"सेटिंग्स","music":"संगीत","beam":"किरण शैली","round":"गोले","sharp":"रेखा","sound":"आवाज़","language":"भाषा","reset":"प्रगति मिटाएँ","resetSure":"पक्का करने के लिए फिर टैप करें","on":"चालू","off":"बंद","chooseLevel":"स्तर","current":"मौजूदा स्तर पर जाएँ","boss":"बॉस","relief":"आराम","t_lock":"लॉक","t_portal":"पोर्टल","t_glass":"काँच","t_mover":"चलता लेज़र","t_split":"विभाजक","world":"दुनिया","play":"खेलें","tagline":"रोशनी को राह दिखाओ। काँच तोड़ो।","tipBasicT":"घुमाने के लिए टैप करें","tipBasic":"दर्पण पर टैप करके उसे पलटें और चालें खत्म होने से पहले पल्स को चमकते लक्ष्य तक पहुँचाएँ।","tipLockT":"लॉक दर्पण","tipLock":"लाल दर्पण लॉक हैं। वे कभी नहीं घूमते — उनके साथ काम करें।","tipPortalT":"पोर्टल","tipPortal":"पोर्टल में घुसा पल्स उसके जुड़वाँ पोर्टल से उसी दिशा में निकलता है।","tipGlassT":"क्रिस्टल और काँच","tipGlass":"हर 💎 क्रिस्टल को रोशन करें, काँच टूटेगा और पल्स का रास्ता खुलेगा।","tipMoverT":"चलता लेज़र","tipMover":"किनारे की धुँधली जगह पर टैप करके लेज़र वहाँ ले जाएँ। इसमें एक चाल लगती है।","tipSplitT":"विभाजक","tipSplit":"विभाजक पल्स को दो किरणों में बाँटता है। हर लक्ष्य को रोशन करें।","stars3":"शानदार!","t_link":"जुड़े","t_tri":"तिहरा","t_fog":"मृगतृष्णा","t_slider":"खिसकती पंक्ति","t_twin":"जुड़वाँ","t_special":"★ ख़ास","handmade":"हाथ से बना","t_fragile":"नाज़ुक","t_color":"रंग","t_grav":"गुरुत्व","broken":"यह दर्पण टूट गया है","tipFogT":"मृगतृष्णा","tipFog":"कुछ खाने धुंध में छिपे हैं। किरण उनसे गुज़ारें ताकि नीचे का दिखे।","tipSliderT":"खिसकती पंक्ति","tipSlider":"बर्फ़ीली पंक्ति पर कहीं भी टैप करें, वह एक कदम दाएँ खिसकेगी। उसकी हर चीज़ साथ चलती है और घूमकर आती है।","tipTwinT":"जुड़वाँ लेज़र","tipTwin":"दो लेज़र, दो रंग। लक्ष्य तभी जलता है जब दोनों किरणें पहुँचें: रंग मिल जाते हैं।","tipLinkT":"जुड़े दर्पण","tipLink":"चमकती ज़ंजीर से जुड़े दो दर्पण साथ चलते हैं: एक पर टैप करें तो दोनों पलटते हैं। असर सोचकर चलें!","tipTriT":"तिहरे दर्पण","tipTri":"सुनहरे दर्पणों की तीन अवस्थाएँ हैं: \\, / और बंद। हर टैप अगली अवस्था पर ले जाता है।","tipFragileT":"नाज़ुक दर्पण","tipFragile":"नारंगी दर्पण इस्तेमाल से चटकते हैं। ज़्यादा टैप करें तो दीवार बन जाते हैं!","tipColorT":"रंग फ़िल्टर","tipColor":"फ़िल्टर रोशनी को रंगते हैं। रंगीन लक्ष्य तभी जलता है जब किरण ठीक उसी रंग में पहुँचे।","tipGravT":"गुरुत्व कुएँ","tipGrav":"गुरुत्व कुआँ किसी भी किरण को अपने भँवर की दिशा में 90° मोड़ देता है।","streak":"लगातार ×{n}","chestT":"खज़ाने का संदूक","dbl":"📺 दोगुना · +{g} ✦","dbled":"दोगुना हुआ! ✓","share":"शेयर","cont":"आगे","copied":"तस्वीर सेव हुई","notEnoughT":"रत्न खत्म","notEnoughSub":"मुफ़्त रत्नों के लिए छोटा विज्ञापन देखें या दुकान पर जाएँ।","freeGems":"📺 मुफ़्त रत्न · +{g} ✦","freeIn":"मुफ़्त रत्न {t} में","freeMax":"और मुफ़्त रत्न कल","skip":"📺 यह स्तर छोड़ें","starterT":"स्टार्टर पैक","starterSub":"एक बार का ऑफ़र · सबसे फ़ायदेमंद","starterIncl":"600 ✦ + 3 मुफ़्त संकेत + 3 मुफ़्त वापस + सुनहरी किरण","later":"बाद में","skins":"किरण के रूप","equip":"लगाएँ","equipped":"लगा है","skinNames":{"theme":"क्लासिक","gold":"सोना","crimson":"किरमिज़ी","ice":"बर्फ़","rainbow":"इंद्रधनुष","prism":"प्रिज़्म"},"dcT":"दैनिक चुनौती","dcSub":"आज सबके लिए एक पहेली","dcDone":"आज हो गया ✓","dcBack":"नई चुनौती के लिए कल आएँ","dcBtn":"☀ दैनिक चुनौती","challenge":"चुनौती","chBanner":"🎯 {name} की चुनौती: स्तर {n} को {m} चालों में","wkBanner":"🗓 इस हफ़्ते की पहेली में {m} चालों को हराएँ","friend":"आपका दोस्त","chWin":"आप चुनौती जीत गए!","chTie":"बराबरी!","chLose":"बहुत करीब!","chScore":"आप: {you} चालें · {name}: {them} चालें","chSend":"चुनौती भेजें","chShare":"मैंने Pulse Nexus का स्तर {n} {m} चालों में हल किया। मुझे हरा सकते हो?","wkShare":"मैंने इस हफ़्ते की Pulse Nexus पहेली {m} चालों में हल की। अब तुम्हारी बारी!","linkCopied":"चुनौती लिंक कॉपी हुआ","wkT":"साप्ताहिक पहेली","wkBtn":"🗓 साप्ताहिक","wkDone":"{m} चालों में हल · इस हफ़्ते आपका सबसे अच्छा: {b}","recT":"रिकॉर्ड","yourName":"आपका नाम","recLocal":"इस डिवाइस पर आपके निजी रिकॉर्ड। सर्वर जुड़ने पर वैश्विक लीडरबोर्ड चालू होंगे।","recGlobal":"दुनिया के टॉप खिलाड़ी — अनंत","evSub":"{d} दिन बाकी · जीतकर टोकन जमा करें (हर तारे पर 1)","evR2":"हर बूस्टर के 2","evR3":"{s} किरण (ख़ास)","ev_ramadan":"रमज़ान की रातें","ev_eidfitr":"ईद-उल-फ़ित्र","ev_eidadha":"ईद-उल-अज़हा","ev_national":"राष्ट्रीय दिवस","ev_halloween":"हैलोवीन","ev_newyear":"नया साल","frames":"बोर्ड फ़्रेम","seasonT":"सीज़न पास","seasonSub":"{d} दिन बाकी · खेलकर XP कमाएँ","tier":"स्तर","free":"मुफ़्त","freeTrack":"मुफ़्त","premium":"प्रीमियम","seasonPremT":"प्रीमियम ट्रैक","seasonPremIncl":"दोगुने इनाम + ख़ास प्रिज़्म किरण और शाही फ़्रेम","seasonPremOn":"प्रीमियम ट्रैक खुल गया!","seasonOnly":"सीज़न पास में ख़ास","tierUp":"स्तर {k} पहुँचे!","rescueT":"बचाव पैक","rescueIncl":"250 ✦ + 2 × +3 चालें + दिखाएँ + ढाल","legendT":"लीजेंड सेट","tag_best":"सबसे फ़ायदेमंद","tag_limited":"सीमित","cbT":"वापसी पर स्वागत!","cbSub":"हमें आपकी याद आई। शुरुआत के लिए यह तोहफ़ा लीजिए।","refillShort":"पूरे","cbBundle":"वापसी पैक","cbIncl":"800 ✦ + हर बूस्टर के 2","fr_world":"दुनिया","fr_circuit":"सर्किट","fr_frost":"पाला","fr_obsidian":"ओब्सीडियन","fr_water":"पानी","fr_mashrabiya":"मशरबिया","fr_ice":"बर्फ़","fr_leaves":"ताड़","fr_holo":"होलो","fr_corona":"कोरोना","fr_royal":"शाही","passT":"Pulse Pass","week":"हफ़्ता","subscribe":"सदस्यता लें","passIncl":"कोई विज्ञापन नहीं · असीमित दिल · हर दिन +{g} ✦","passLeft":"{d} दिन बाकी","passOn":"Pulse Pass चालू — मज़े करें!","passDrip":"Pulse Pass: +{g} ✦ शामिल","lumiBoss":"बॉस स्तर! तुम कर सकते हो","lumiNew":"अरे, कुछ नया!","lumiWin":"कमाल!|वाह!|क्या चमक है!|बढ़िया!|सुंदर!","lumiLose":"बहुत करीब…|फिर से!|हम कर सकते हैं!","lumiLast":"आख़िरी चाल!","lumiHi":"नमस्ते! मैं लूमी हूँ","mapTitle":"दुनिया का नक्शा","enter":"दुनिया में चलें","newWorld":"नई दुनिया खुली!","sigMech":"यहाँ नया:","wt0":"जहाँ रोशनी शुरू होती है","wt1":"जमे आसमान पर रोशनी के परदे","wt2":"आग में ढला काँच — सावधानी से","wt3":"रोशनी रंगों में बँटती है","wt4":"गुरुत्व रोशनी को भी मोड़ देता है","wt5":"जो दिखता है, ज़रूरी नहीं वहाँ हो","wt6":"बर्फ़ तुम्हारे नीचे खिसकती है","wt7":"दो रोशनियाँ एक बनती हैं","wt8":"यहाँ सब कुछ जुड़ा है","cbMode":"रंग-अंधता के प्रतीक","boosters":"बूस्टर","b_moves":"+3 चालें","b_reveal":"दिखाएँ","b_shield":"ढाल","shieldSaved":"🛡 ढाल ने आपका दिल बचा लिया","t_endless":"अनंत","endBtn":"∞ अनंत","endOver":"दौर खत्म","endScore":"{k} चरण","endBest":"सबसे अच्छा: {b}","newBest":"नया रिकॉर्ड!","endNew":"∞ नया दौर · 1 ♥","endLocked":"अनंत मोड स्तर {n} पर खुलता है","stage":"चरण {k}","golden":"सुनहरा टुकड़ा","goldGot":"सुनहरा टुकड़ा! +{g} ✦","goldCount":"✨ {n} सुनहरे टुकड़े","stats":"स्तर आँकड़े","bnPerfect":"शानदार!","bnGreat":"बढ़िया!","bnClear":"पूरा!","newMech":"नया","practice":"अभ्यास {k}/2","assist":"मदद: +{n} चाल जोड़ी गई","claim2":"📺 ×2 लें","shopFree":"मुफ़्त","shieldStreak":"🛡 ढाल ने आपकी जीत की लय बचा ली","guest":"मेहमान के रूप में खेल रहे हैं","guestNote":"केवल इस फ़ोन पर सेव","saveT":"अपनी प्रगति सेव करें","saveSub":"अपने लेवल, जेम्स और ख़रीदारी सुरक्षित रखने और किसी भी डिवाइस पर जारी रखने के लिए साइन इन करें। बस एक टैप।","xtraUnlock":"नए मोड खुल गए: एंडलेस, साप्ताहिक पहेली और सीज़न पास!","cloudGuest":"बंद · चालू करने के लिए साइन इन करें","level":"स्तर","navMap":"नक्शा","gateReach":"स्तर {n} तक पहुँचें","wStars":"इस दुनिया के सितारे","adPrivacy":"विज्ञापन गोपनीयता विकल्प","hintAdT":"अटक गए?","hintAdSub":"एक छोटा वीडियो देखें और मुफ़्त संकेत पाएँ।","hintAdBtn":"मुफ़्त संकेत","bossAd":"इस बॉस के लिए मुफ़्त +3 चालें"},"id":{"signInT":"Masuk untuk bermain","signInSub":"Progres, permata, dan pembelianmu tersimpan di akunmu dan ikut ke perangkat mana pun.","withApple":"Masuk dengan Apple","withGoogle":"Lanjutkan dengan Google","account":"Akun","signOut":"Keluar","delAcc":"Hapus akun","delSure":"Ini menghapus akun, progres, dan permatamu secara permanen. Pembelian tidak dikembalikan. Ketuk lagi untuk konfirmasi.","delDone":"Akunmu telah dihapus","signInFail":"Proses masuk tidak selesai. Coba lagi.","buyFail":"Pembelian tidak selesai","notEnoughShop":"Dapatkan lebih banyak permata di toko.","tag_popular":"TERPOPULER","restore":"Pulihkan pembelian","restored":"Pembelian dipulihkan","noRestore":"Tidak ada pembelian untuk dipulihkan","privacy":"Kebijakan privasi","cloud":"Simpan di cloud","cloudOn":"Tersinkron","cloudOff":"Di versi aplikasi","month":"bulan","resetKeep":"Level dan bintang diulang. Pembelian, permata, dan tampilan tetap ada.","gemsGot":"+{g} ✦","evR1":"100 ✦","lvl":"LVL","moves":"Langkah","targets":"Target","undo":"Urungkan","hint":"Petunjuk","winTitle":"Harmoni tercapai","winSub":"Level {n} selesai","next":"Level berikutnya","replay":"Ulangi","levels":"Level","failTitle":"Langkah habis","failSub":"Denyut padam sebelum mencapai inti.","contGems":"+{m} langkah · {c} ✦","contAd":"📺 Tonton iklan · +{m} langkah","retry":"Coba lagi","lostHeart":"−1 ♥ hilang","noHeartsTitle":"Nyawa habis","noHeartsSub":"Nyawa berikutnya dalam {t}","heartAd":"📺 Tonton iklan · +1 ♥","refill":"Isi penuh · {c} ✦","close":"Tutup","ok":"Mengerti","notEnough":"✦ tidak cukup — kunjungi toko","locked":"Cermin ini terkunci","noSolution":"Tidak bisa diselesaikan dengan sisa langkah — coba Urungkan atau Coba lagi","nothingUndo":"Tidak ada yang bisa diurungkan","hintDone":"Petunjuk dipakai","shop":"Toko","shopSub":"Permata untuk petunjuk, urungkan, dan langkah tambahan","buy":"Beli","storeOff":"Toko belum terhubung","owned":"Dimiliki","noAds":"Hapus iklan","gems":"Permata","dailyTitle":"Hadiah harian","dailySub":"Beruntun {d} hari","claim":"Ambil","settings":"Pengaturan","music":"Musik","beam":"Gaya sinar","round":"Bola","sharp":"Garis","sound":"Suara","language":"Bahasa","reset":"Hapus progres","resetSure":"Ketuk lagi untuk konfirmasi","on":"Nyala","off":"Mati","chooseLevel":"Level","current":"Ke level sekarang","boss":"Bos","relief":"Santai","t_lock":"Terkunci","t_portal":"Portal","t_glass":"Kaca","t_mover":"Pemancar gerak","t_split":"Pemecah","world":"Dunia","play":"MAIN","tagline":"Arahkan cahaya. Pecahkan kaca.","tipBasicT":"Ketuk untuk memutar","tipBasic":"Ketuk cermin untuk membaliknya dan arahkan denyut ke target yang bersinar sebelum langkahmu habis.","tipLockT":"Cermin terkunci","tipLock":"Cermin merah terkunci. Manfaatkan apa adanya — cermin ini tidak pernah berputar.","tipPortalT":"Portal","tipPortal":"Denyut yang masuk portal keluar dari kembarannya, ke arah yang sama.","tipGlassT":"Kristal & kaca","tipGlass":"Nyalakan setiap 💎 kristal dan kaca akan pecah, membuka jalan bagi denyut.","tipMoverT":"Pemancar gerak","tipMover":"Ketuk slot bayangan di tepi untuk memindahkan laser ke sana. Memindahkan butuh satu langkah.","tipSplitT":"Pemecah","tipSplit":"Pemecah membelah denyut menjadi dua sinar. Nyalakan semua target.","stars3":"Sempurna!","t_link":"Terhubung","t_tri":"Tiga mode","t_fog":"Fatamorgana","t_slider":"Geser","t_twin":"Kembar","t_special":"★ Spesial","handmade":"Buatan tangan","t_fragile":"Rapuh","t_color":"Warna","t_grav":"Gravitasi","broken":"Cermin ini rusak","tipFogT":"Fatamorgana","tipFog":"Beberapa petak tersembunyi dalam kabut. Lewatkan sinar untuk melihat isinya.","tipSliderT":"Baris geser","tipSlider":"Ketuk baris es untuk menggesernya satu petak ke kanan. Semua isinya ikut bergerak dan berputar ke sisi lain.","tipTwinT":"Laser kembar","tipTwin":"Dua laser, dua warna. Target hanya menyala saat KEDUA sinar sampai: warnanya bercampur.","tipLinkT":"Cermin terhubung","tipLink":"Dua cermin yang disambung rantai bercahaya bergerak bersama: ketuk satu, keduanya terbalik. Rencanakan efeknya!","tipTriT":"Cermin tiga mode","tipTri":"Cermin emas punya tiga keadaan: \\, / dan MATI. Setiap ketukan pindah ke berikutnya.","tipFragileT":"Cermin rapuh","tipFragile":"Cermin oranye retak saat dipakai. Terlalu sering diketuk, ia pecah jadi tembok!","tipColorT":"Filter warna","tipColor":"Filter mewarnai cahaya. Target berwarna hanya menyala jika sinar tiba dengan warna yang sama persis.","tipGravT":"Sumur gravitasi","tipGrav":"Sumur gravitasi membelokkan sinar 90° searah spiralnya.","streak":"Beruntun ×{n}","chestT":"Peti harta","dbl":"📺 Gandakan · +{g} ✦","dbled":"Digandakan! ✓","share":"Bagikan","cont":"Lanjut","copied":"Gambar disimpan","notEnoughT":"Permata habis","notEnoughSub":"Tonton iklan singkat untuk permata gratis, atau kunjungi toko.","freeGems":"📺 Permata gratis · +{g} ✦","freeIn":"Permata gratis dalam {t}","freeMax":"Permata gratis lagi besok","skip":"📺 Lewati level ini","starterT":"Paket pemula","starterSub":"Penawaran sekali · paling hemat","starterIncl":"600 ✦ + 3 petunjuk gratis + 3 urungkan gratis + sinar emas","later":"Nanti saja","skins":"Tampilan sinar","equip":"Pakai","equipped":"Dipakai","skinNames":{"theme":"Klasik","gold":"Emas","crimson":"Merah tua","ice":"Es","rainbow":"Pelangi","prism":"Prisma"},"dcT":"Tantangan harian","dcSub":"Satu teka-teki untuk semua hari ini","dcDone":"Selesai hari ini ✓","dcBack":"Kembali besok untuk tantangan baru","dcBtn":"☀ Tantangan harian","challenge":"Tantang","chBanner":"🎯 {name} menantangmu: level {n} dalam {m} langkah","wkBanner":"🗓 Kalahkan {m} langkah di teka-teki minggu ini","friend":"Temanmu","chWin":"Kamu menang tantangan!","chTie":"Seri!","chLose":"Sedikit lagi!","chScore":"Kamu: {you} langkah · {name}: {them} langkah","chSend":"Kirim tantangan","chShare":"Aku menyelesaikan level {n} Pulse Nexus dalam {m} langkah. Bisa kalahkan aku?","wkShare":"Aku menyelesaikan teka-teki mingguan Pulse Nexus dalam {m} langkah. Giliranmu!","linkCopied":"Tautan tantangan disalin","wkT":"Teka-teki mingguan","wkBtn":"🗓 Mingguan","wkDone":"Selesai dalam {m} langkah · terbaikmu minggu ini: {b}","recT":"Rekor","yourName":"Namamu","recLocal":"Rekor pribadi di perangkat ini. Papan peringkat global aktif setelah server terhubung.","recGlobal":"Pemain teratas dunia — Tanpa batas","evSub":"Sisa {d} hari · kumpulkan token dengan menang (1 per bintang)","evR2":"2 dari setiap booster","evR3":"Sinar {s} (eksklusif)","ev_ramadan":"Malam Ramadan","ev_eidfitr":"Idulfitri","ev_eidadha":"Iduladha","ev_national":"Hari Nasional","ev_halloween":"Halloween","ev_newyear":"Tahun Baru","frames":"Bingkai papan","seasonT":"Season Pass","seasonSub":"Sisa {d} hari · dapatkan XP dengan bermain","tier":"Tingkat","free":"gratis","freeTrack":"Gratis","premium":"Premium","seasonPremT":"Jalur premium","seasonPremIncl":"Hadiah ganda + sinar Prisma & bingkai Royal eksklusif","seasonPremOn":"Jalur premium terbuka!","seasonOnly":"Eksklusif Season Pass","tierUp":"Tingkat {k} tercapai!","rescueT":"Paket penyelamat","rescueIncl":"250 ✦ + 2 × +3 langkah + Ungkap + Perisai","legendT":"Set legenda","tag_best":"PALING HEMAT","tag_limited":"TERBATAS","cbT":"Selamat datang kembali!","cbSub":"Kami merindukanmu. Ini hadiah untuk memulai lagi.","refillShort":"penuh","cbBundle":"Paket kembali","cbIncl":"800 ✦ + 2 dari setiap booster","fr_world":"Dunia","fr_circuit":"Sirkuit","fr_frost":"Embun beku","fr_obsidian":"Obsidian","fr_water":"Air","fr_mashrabiya":"Masyrabiya","fr_ice":"Es","fr_leaves":"Palem","fr_holo":"Holo","fr_corona":"Korona","fr_royal":"Royal","passT":"Pulse Pass","week":"minggu","subscribe":"Berlangganan","passIncl":"Tanpa iklan · nyawa tak terbatas · +{g} ✦ setiap hari","passLeft":"Sisa {d} hari","passOn":"Pulse Pass aktif — selamat menikmati!","passDrip":"Pulse Pass: +{g} ✦ termasuk","lumiBoss":"Level bos! Kamu pasti bisa","lumiNew":"Wah, ada yang baru!","lumiWin":"Hebat!|Wow!|Berkilau!|Mantap!|Indah!","lumiLose":"Sedikit lagi…|Coba lagi!|Kita bisa!","lumiLast":"Langkah terakhir!","lumiHi":"Hai! Aku Lumi","mapTitle":"Peta dunia","enter":"Masuk dunia","newWorld":"Dunia baru terbuka!","sigMech":"Baru di sini:","wt0":"Tempat cahaya bermula","wt1":"Tirai cahaya di langit beku","wt2":"Kaca ditempa api — hati-hati","wt3":"Cahaya terpecah menjadi warna","wt4":"Gravitasi membelokkan cahaya sekalipun","wt5":"Tidak semua yang kamu lihat benar-benar ada","wt6":"Es bergerak di bawahmu","wt7":"Dua cahaya menjadi satu","wt8":"Di sini semuanya terhubung","cbMode":"Simbol buta warna","boosters":"Booster","b_moves":"+3 langkah","b_reveal":"Ungkap","b_shield":"Perisai","shieldSaved":"🛡 Perisai menyelamatkan nyawamu","t_endless":"Tanpa batas","endBtn":"∞ Tanpa batas","endOver":"Permainan selesai","endScore":"{k} tahap","endBest":"Terbaik: {b}","newBest":"Rekor baru!","endNew":"∞ Main lagi · 1 ♥","endLocked":"Mode tanpa batas terbuka di level {n}","stage":"Tahap {k}","golden":"Pecahan emas","goldGot":"Pecahan emas! +{g} ✦","goldCount":"✨ {n} pecahan emas","stats":"Statistik level","bnPerfect":"SEMPURNA!","bnGreat":"HEBAT!","bnClear":"BERHASIL!","newMech":"Baru","practice":"Latihan {k}/2","assist":"Bantuan: +{n} langkah","claim2":"📺 Ambil ×2","shopFree":"Gratis","shieldStreak":"🛡 Perisai menjaga streak kemenanganmu","guest":"Bermain sebagai tamu","guestNote":"Hanya tersimpan di ponsel ini","saveT":"Simpan progresmu","saveSub":"Masuk agar level, permata, dan pembelianmu aman dan bisa lanjut di perangkat mana pun. Cukup satu ketukan.","xtraUnlock":"Mode baru terbuka: Tanpa Akhir, Teka-teki Mingguan, dan Season Pass!","cloudGuest":"Mati · masuk untuk mengaktifkan","level":"Level","navMap":"Peta","gateReach":"Capai level {n}","wStars":"Bintang di dunia ini","adPrivacy":"Pilihan privasi iklan","hintAdT":"Buntu?","hintAdSub":"Tonton video singkat untuk petunjuk gratis.","hintAdBtn":"Petunjuk gratis","bossAd":"+3 langkah gratis untuk bos ini"},"tr":{"signInT":"Oynamak için giriş yap","signInSub":"İlerlemen, mücevherlerin ve satın alımların hesabına kaydedilir ve her cihazda seninle olur.","withApple":"Apple ile Giriş Yap","withGoogle":"Google ile devam et","account":"Hesap","signOut":"Çıkış yap","delAcc":"Hesabı sil","delSure":"Bu işlem hesabını, ilerlemeni ve mücevherlerini kalıcı olarak siler. Satın alımlar iade edilmez. Onaylamak için tekrar dokun.","delDone":"Hesabın silindi","signInFail":"Giriş tamamlanamadı. Lütfen tekrar dene.","buyFail":"Satın alma tamamlanamadı","notEnoughShop":"Mağazadan daha fazla mücevher al.","tag_popular":"EN POPÜLER","restore":"Satın alımları geri yükle","restored":"Satın alımlar geri yüklendi","noRestore":"Geri yüklenecek satın alım yok","privacy":"Gizlilik politikası","cloud":"Bulut kaydı","cloudOn":"Senkronize","cloudOff":"Uygulama sürümünde","month":"ay","resetKeep":"Bölümler ve yıldızlar sıfırlanır. Satın alımlar, mücevherler ve görünümler korunur.","gemsGot":"+{g} ✦","evR1":"100 ✦","lvl":"SVY","moves":"Hamle","targets":"Hedef","undo":"Geri al","hint":"İpucu","winTitle":"Uyum sağlandı","winSub":"Seviye {n} tamamlandı","next":"Sonraki seviye","replay":"Tekrar","levels":"Seviyeler","failTitle":"Hamle kalmadı","failSub":"Nabız çekirdeğe ulaşmadan söndü.","contGems":"+{m} hamle · {c} ✦","contAd":"📺 Reklam izle · +{m} hamle","retry":"Tekrar dene","lostHeart":"−1 ♥ kaybedildi","noHeartsTitle":"Can kalmadı","noHeartsSub":"Sonraki can {t} içinde","heartAd":"📺 Reklam izle · +1 ♥","refill":"Hepsini doldur · {c} ✦","close":"Kapat","ok":"Anladım","notEnough":"Yeterli ✦ yok — mağazaya git","locked":"Bu ayna kilitli","noSolution":"Kalan hamlelerle çözülemez — Geri al veya Tekrar dene","nothingUndo":"Geri alınacak bir şey yok","hintDone":"İpucu uygulandı","shop":"Mağaza","shopSub":"Mücevherler ipucu, geri alma ve ekstra hamle sağlar","buy":"Satın al","storeOff":"Mağaza henüz bağlı değil","owned":"Sahipsin","noAds":"Reklamları kaldır","gems":"Mücevher","dailyTitle":"Günlük ödül","dailySub":"{d}. gün serisi","claim":"Al","settings":"Ayarlar","music":"Müzik","beam":"Işın stili","round":"Küreler","sharp":"Çizgi","sound":"Ses","language":"Dil","reset":"İlerlemeyi sıfırla","resetSure":"Onaylamak için tekrar dokun","on":"Açık","off":"Kapalı","chooseLevel":"Seviyeler","current":"Mevcut seviyeye git","boss":"Patron","relief":"Mola","t_lock":"Kilitli","t_portal":"Portal","t_glass":"Cam","t_mover":"Hareketli lazer","t_split":"Bölücü","world":"Dünya","play":"OYNA","tagline":"Işığa yol göster. Camı kır.","tipBasicT":"Döndürmek için dokun","tipBasic":"Bir aynaya dokunarak çevir ve hamlelerin bitmeden nabzı parlayan hedefe yönlendir.","tipLockT":"Kilitli aynalar","tipLock":"Kırmızı aynalar kilitlidir. Asla dönmezler — onlarla birlikte çalış.","tipPortalT":"Portallar","tipPortal":"Bir portala giren nabız, ikizinden aynı yönde çıkar.","tipGlassT":"Kristaller ve cam","tipGlass":"Her 💎 kristali yak, cam kırılsın ve nabza yol açılsın.","tipMoverT":"Hareketli lazer","tipMover":"Lazeri taşımak için kenardaki hayalet yuvaya dokun. Taşımak bir hamle sayılır.","tipSplitT":"Bölücüler","tipSplit":"Bölücü nabzı iki ışına ayırır. Tüm hedefleri yak.","stars3":"Mükemmel!","t_link":"Bağlı","t_tri":"Üçlü","t_fog":"Serap","t_slider":"Kayan","t_twin":"İkiz","t_special":"★ Özel","handmade":"El yapımı","t_fragile":"Kırılgan","t_color":"Renkler","t_grav":"Yerçekimi","broken":"Bu ayna kırık","tipFogT":"Serap","tipFog":"Bazı kareler bir pusun içinde gizli. Altında ne olduğunu görmek için ışını içlerinden geçir.","tipSliderT":"Kayan sıra","tipSlider":"Buzlu sıraya dokun, bir kare sağa kaysın. Üzerindeki her şey birlikte hareket eder ve diğer uçtan döner.","tipTwinT":"İkiz lazerler","tipTwin":"İki lazer, iki renk. Hedef ancak İKİ ışın da ulaşınca yanar: renkler karışır.","tipLinkT":"Bağlı aynalar","tipLink":"Parlayan bir zincirle bağlı iki ayna birlikte hareket eder: birine dokununca ikisi de döner. Etkisini planla!","tipTriT":"Üçlü aynalar","tipTri":"Altın aynaların üç durumu var: \\, / ve KAPALI. Her dokunuş bir sonrakine geçer.","tipFragileT":"Kırılgan aynalar","tipFragile":"Turuncu aynalar kullandıkça çatlar. Fazla dokunursan duvara dönüşür!","tipColorT":"Renk filtreleri","tipColor":"Filtreler ışığı boyar. Renkli hedef, ışın tam kendi renginde gelirse yanar.","tipGravT":"Yerçekimi kuyuları","tipGrav":"Yerçekimi kuyusu her ışını sarmalının yönünde 90° büker.","streak":"Seri ×{n}","chestT":"Hazine sandığı","dbl":"📺 İkiye katla · +{g} ✦","dbled":"İkiye katlandı! ✓","share":"Paylaş","cont":"Devam","copied":"Görsel kaydedildi","notEnoughT":"Mücevher kalmadı","notEnoughSub":"Ücretsiz mücevher için kısa bir reklam izle ya da mağazaya git.","freeGems":"📺 Ücretsiz mücevher · +{g} ✦","freeIn":"Ücretsiz mücevher {t} sonra","freeMax":"Yarın yine ücretsiz mücevher","skip":"📺 Bu seviyeyi atla","starterT":"Başlangıç paketi","starterSub":"Tek seferlik teklif · en avantajlı","starterIncl":"600 ✦ + 3 ücretsiz ipucu + 3 ücretsiz geri alma + Altın ışın","later":"Belki sonra","skins":"Işın görünümleri","equip":"Kullan","equipped":"Kullanılıyor","skinNames":{"theme":"Klasik","gold":"Altın","crimson":"Kızıl","ice":"Buz","rainbow":"Gökkuşağı","prism":"Prizma"},"dcT":"Günlük meydan okuma","dcSub":"Bugün herkes için bir bulmaca","dcDone":"Bugün tamam ✓","dcBack":"Yeni meydan okuma için yarın gel","dcBtn":"☀ Günlük meydan okuma","challenge":"Meydan oku","chBanner":"🎯 {name} sana meydan okuyor: Seviye {n}, {m} hamlede","wkBanner":"🗓 Bu haftanın bulmacasında {m} hamleyi geç","friend":"Arkadaşın","chWin":"Meydan okumayı kazandın!","chTie":"Berabere!","chLose":"Çok yaklaştın!","chScore":"Sen: {you} hamle · {name}: {them} hamle","chSend":"Meydan okuma gönder","chShare":"Pulse Nexus'ta {n}. seviyeyi {m} hamlede çözdüm. Beni geçebilir misin?","wkShare":"Bu haftanın Pulse Nexus bulmacasını {m} hamlede çözdüm. Sıra sende!","linkCopied":"Meydan okuma bağlantısı kopyalandı","wkT":"Haftalık bulmaca","wkBtn":"🗓 Haftalık","wkDone":"{m} hamlede çözüldü · bu haftaki en iyin: {b}","recT":"Rekorlar","yourName":"Adın","recLocal":"Bu cihazdaki kişisel rekorların. Bir sunucu bağlanınca küresel sıralamalar açılır.","recGlobal":"Dünyanın en iyileri — Sonsuz","evSub":"{d} gün kaldı · kazanarak jeton topla (yıldız başına 1)","evR2":"Her güçlendiriciden 2","evR3":"{s} ışını (özel)","ev_ramadan":"Ramazan Geceleri","ev_eidfitr":"Ramazan Bayramı","ev_eidadha":"Kurban Bayramı","ev_national":"Ulusal Gün","ev_halloween":"Cadılar Bayramı","ev_newyear":"Yılbaşı","frames":"Tahta çerçeveleri","seasonT":"Sezon Kartı","seasonSub":"{d} gün kaldı · oynayarak XP kazan","tier":"Kademe","free":"ücretsiz","freeTrack":"Ücretsiz","premium":"Premium","seasonPremT":"Premium yol","seasonPremIncl":"Çift ödül + özel Prizma ışını ve Kraliyet çerçevesi","seasonPremOn":"Premium yol açıldı!","seasonOnly":"Sezon Kartı'na özel","tierUp":"{k}. kademeye ulaştın!","rescueT":"Kurtarma paketi","rescueIncl":"250 ✦ + 2 × +3 hamle + Göster + Kalkan","legendT":"Efsane seti","tag_best":"EN AVANTAJLI","tag_limited":"SINIRLI","cbT":"Tekrar hoş geldin!","cbSub":"Seni özledik. Başlaman için bir hediye.","refillShort":"dolu","cbBundle":"Dönüş paketi","cbIncl":"800 ✦ + her güçlendiriciden 2","fr_world":"Dünya","fr_circuit":"Devre","fr_frost":"Kırağı","fr_obsidian":"Obsidyen","fr_water":"Su","fr_mashrabiya":"Meşrebiye","fr_ice":"Buz","fr_leaves":"Palmiye","fr_holo":"Holo","fr_corona":"Korona","fr_royal":"Kraliyet","passT":"Pulse Pass","week":"hafta","subscribe":"Abone ol","passIncl":"Reklamsız · sınırsız can · her gün +{g} ✦","passLeft":"{d} gün kaldı","passOn":"Pulse Pass aktif — keyfini çıkar!","passDrip":"Pulse Pass: +{g} ✦ dahil","lumiBoss":"Patron seviyesi! Yapabilirsin","lumiNew":"Ooo, yeni bir şey!","lumiWin":"Harika!|Vay!|Pırıl pırıl!|Başardın!|Çok güzel!","lumiLose":"Çok yaklaştın…|Bir daha!|Yapabiliriz!","lumiLast":"Son hamle!","lumiHi":"Merhaba! Ben Lumi","mapTitle":"Dünya haritası","enter":"Dünyaya gir","newWorld":"Yeni dünya açıldı!","sigMech":"Burada yeni:","wt0":"Işığın başladığı yer","wt1":"Donmuş göğün üstünde ışık perdeleri","wt2":"Ateşte dövülmüş cam — dikkatli ol","wt3":"Işık renklere ayrılır","wt4":"Yerçekimi ışığı bile büker","wt5":"Gördüğün her şey gerçekten orada değil","wt6":"Buz ayaklarının altında kayıyor","wt7":"İki ışık bir olur","wt8":"Burada her şey bağlantılı","cbMode":"Renk körlüğü simgeleri","boosters":"Güçlendiriciler","b_moves":"+3 hamle","b_reveal":"Göster","b_shield":"Kalkan","shieldSaved":"🛡 Kalkan canını kurtardı","t_endless":"Sonsuz","endBtn":"∞ Sonsuz","endOver":"Tur bitti","endScore":"{k} aşama","endBest":"En iyi: {b}","newBest":"Yeni rekor!","endNew":"∞ Yeni tur · 1 ♥","endLocked":"Sonsuz mod {n}. seviyede açılır","stage":"Aşama {k}","golden":"Altın parça","goldGot":"Altın parça! +{g} ✦","goldCount":"✨ {n} altın parça","stats":"Seviye istatistikleri","bnPerfect":"MÜKEMMEL!","bnGreat":"HARİKA!","bnClear":"TAMAM!","newMech":"Yeni","practice":"Alıştırma {k}/2","assist":"Yardım: +{n} hamle eklendi","claim2":"📺 ×2 al","shopFree":"Ücretsiz","shieldStreak":"🛡 Kalkan galibiyet serini korudu","guest":"Misafir olarak oynuyorsun","guestNote":"Yalnızca bu telefonda kayıtlı","saveT":"İlerlemeni kaydet","saveSub":"Seviyelerin, mücevherlerin ve satın aldıkların güvende kalsın, her cihazda devam et. Tek dokunuş yeter.","xtraUnlock":"Yeni modlar açıldı: Sonsuz, Haftalık bulmaca ve Sezon Bileti!","cloudGuest":"Kapalı · açmak için giriş yap","level":"Seviye","navMap":"Harita","gateReach":"{n}. seviyeye ulaş","wStars":"Bu dünyadaki yıldızlar","adPrivacy":"Reklam gizliliği seçenekleri","hintAdT":"Takıldın mı?","hintAdSub":"Kısa bir video izle, ücretsiz ipucu kazan.","hintAdBtn":"Ücretsiz ipucu","bossAd":"Bu boss için ücretsiz +3 hamle"},"fr":{"signInT":"Connectez-vous pour jouer","signInSub":"Votre progression, vos gemmes et vos achats sont enregistrés sur votre compte et vous suivent sur tous vos appareils.","withApple":"Se connecter avec Apple","withGoogle":"Continuer avec Google","account":"Compte","signOut":"Se déconnecter","delAcc":"Supprimer le compte","delSure":"Cela supprime définitivement votre compte, votre progression et vos gemmes. Les achats ne sont pas remboursés. Touchez à nouveau pour confirmer.","delDone":"Votre compte a été supprimé","signInFail":"La connexion n'a pas abouti. Réessayez.","buyFail":"L'achat n'a pas abouti","notEnoughShop":"Obtenez plus de gemmes dans la boutique.","tag_popular":"LE PLUS POPULAIRE","restore":"Restaurer les achats","restored":"Achats restaurés","noRestore":"Aucun achat à restaurer","privacy":"Politique de confidentialité","cloud":"Sauvegarde cloud","cloudOn":"Synchronisé","cloudOff":"Dans la version appli","month":"mois","resetKeep":"Les niveaux et étoiles repartent de zéro. Achats, gemmes et apparences sont conservés.","gemsGot":"+{g} ✦","evR1":"100 ✦","lvl":"NIV","moves":"Coups","targets":"Cibles","undo":"Annuler","hint":"Indice","winTitle":"Harmonie atteinte","winSub":"Niveau {n} terminé","next":"Niveau suivant","replay":"Rejouer","levels":"Niveaux","failTitle":"Plus de coups","failSub":"L’impulsion s’est éteinte avant d’atteindre le cœur.","contGems":"+{m} coups · {c} ✦","contAd":"📺 Voir une pub · +{m} coups","retry":"Réessayer","lostHeart":"−1 ♥ perdu","noHeartsTitle":"Plus de cœurs","noHeartsSub":"Prochain cœur dans {t}","heartAd":"📺 Voir une pub · +1 ♥","refill":"Tout remplir · {c} ✦","close":"Fermer","ok":"Compris","notEnough":"Pas assez de ✦ — passe à la boutique","locked":"Ce miroir est verrouillé","noSolution":"Impossible avec les coups restants — essaie Annuler ou Réessayer","nothingUndo":"Rien à annuler","hintDone":"Indice appliqué","shop":"Boutique","shopSub":"Les gemmes donnent indices, annulations et coups bonus","buy":"Acheter","storeOff":"Boutique pas encore connectée","owned":"Acquis","noAds":"Supprimer les pubs","gems":"Gemmes","dailyTitle":"Récompense du jour","dailySub":"Série de {d} jours","claim":"Récupérer","settings":"Réglages","music":"Musique","beam":"Style du rayon","round":"Orbes","sharp":"Ligne","sound":"Son","language":"Langue","reset":"Effacer la progression","resetSure":"Touche encore pour confirmer","on":"Oui","off":"Non","chooseLevel":"Niveaux","current":"Aller au niveau actuel","boss":"Boss","relief":"Pause","t_lock":"Verrouillé","t_portal":"Portail","t_glass":"Verre","t_mover":"Émetteur mobile","t_split":"Diviseur","world":"Monde","play":"JOUER","tagline":"Guide la lumière. Brise le verre.","tipBasicT":"Touche pour tourner","tipBasic":"Touche un miroir pour le retourner et guide l’impulsion vers la cible lumineuse avant d’être à court de coups.","tipLockT":"Miroirs verrouillés","tipLock":"Les miroirs rouges sont verrouillés. Ils ne tournent jamais : fais avec.","tipPortalT":"Portails","tipPortal":"Une impulsion qui entre dans un portail ressort par son jumeau, dans la même direction.","tipGlassT":"Cristaux et verre","tipGlass":"Allume chaque 💎 cristal et le verre se brise, ouvrant la voie à l’impulsion.","tipMoverT":"Émetteur mobile","tipMover":"Touche un emplacement fantôme du bord pour y déplacer le laser. Ça coûte un coup.","tipSplitT":"Diviseurs","tipSplit":"Un diviseur coupe l’impulsion en deux rayons. Allume toutes les cibles.","stars3":"Parfait !","t_link":"Liés","t_tri":"Triple","t_fog":"Mirage","t_slider":"Glissière","t_twin":"Jumeaux","t_special":"★ Spécial","handmade":"Fait main","t_fragile":"Fragile","t_color":"Couleurs","t_grav":"Gravité","broken":"Ce miroir est cassé","tipFogT":"Mirage","tipFog":"Certaines cases sont cachées dans une brume. Fais-y passer le rayon pour révéler ce qu’il y a dessous.","tipSliderT":"Rangée glissante","tipSlider":"Touche la rangée gelée pour la faire glisser d’une case vers la droite. Tout ce qu’elle porte bouge avec elle et fait le tour.","tipTwinT":"Lasers jumeaux","tipTwin":"Deux lasers, deux couleurs. La cible ne s’allume que si LES DEUX rayons l’atteignent : leurs couleurs se mélangent.","tipLinkT":"Miroirs liés","tipLink":"Deux miroirs reliés par une chaîne lumineuse bougent ensemble : en toucher un retourne les deux. Anticipe l’effet !","tipTriT":"Miroirs triples","tipTri":"Les miroirs dorés ont trois états : \\, / et ÉTEINT. Chaque touche passe au suivant.","tipFragileT":"Miroirs fragiles","tipFragile":"Les miroirs orange se fissurent à l’usage. Touche-les trop souvent et ils deviennent un mur !","tipColorT":"Filtres de couleur","tipColor":"Les filtres teintent la lumière. Une cible colorée ne s’allume que si le rayon arrive exactement de sa couleur.","tipGravT":"Puits de gravité","tipGrav":"Un puits de gravité courbe tout rayon de 90° dans le sens de sa spirale.","streak":"Série ×{n}","chestT":"Coffre au trésor","dbl":"📺 Doubler · +{g} ✦","dbled":"Doublé ! ✓","share":"Partager","cont":"Continuer","copied":"Image enregistrée","notEnoughT":"Plus de gemmes","notEnoughSub":"Regarde une courte pub pour des gemmes gratuites, ou passe à la boutique.","freeGems":"📺 Gemmes gratuites · +{g} ✦","freeIn":"Gemmes gratuites dans {t}","freeMax":"D’autres gemmes gratuites demain","skip":"📺 Passer ce niveau","starterT":"Pack de départ","starterSub":"Offre unique · meilleur rapport","starterIncl":"600 ✦ + 3 indices gratuits + 3 annulations gratuites + rayon doré","later":"Plus tard","skins":"Apparences du rayon","equip":"Équiper","equipped":"Équipé","skinNames":{"theme":"Classique","gold":"Or","crimson":"Pourpre","ice":"Glace","rainbow":"Arc-en-ciel","prism":"Prisme"},"dcT":"Défi du jour","dcSub":"Un puzzle pour tout le monde aujourd’hui","dcDone":"Fait aujourd’hui ✓","dcBack":"Reviens demain pour un nouveau défi","dcBtn":"☀ Défi du jour","challenge":"Défier","chBanner":"🎯 {name} te défie : niveau {n} en {m} coups","wkBanner":"🗓 Fais mieux que {m} coups sur le puzzle de la semaine","friend":"Ton ami","chWin":"Tu remportes le défi !","chTie":"Égalité !","chLose":"Presque !","chScore":"Toi : {you} coups · {name} : {them} coups","chSend":"Envoyer un défi","chShare":"J’ai résolu le niveau {n} de Pulse Nexus en {m} coups. Tu peux faire mieux ?","wkShare":"J’ai résolu le puzzle de la semaine de Pulse Nexus en {m} coups. À toi !","linkCopied":"Lien du défi copié","wkT":"Puzzle de la semaine","wkBtn":"🗓 Semaine","wkDone":"Résolu en {m} coups · ton record cette semaine : {b}","recT":"Records","yourName":"Ton nom","recLocal":"Records personnels sur cet appareil. Les classements mondiaux s’activent une fois un serveur connecté.","recGlobal":"Meilleurs joueurs du monde — Infini","evSub":"Encore {d} jours · gagne des jetons en gagnant (1 par étoile)","evR2":"2 de chaque bonus","evR3":"Rayon {s} (exclusif)","ev_ramadan":"Nuits du Ramadan","ev_eidfitr":"Aïd el-Fitr","ev_eidadha":"Aïd el-Adha","ev_national":"Fête nationale","ev_halloween":"Halloween","ev_newyear":"Nouvel An","frames":"Cadres du plateau","seasonT":"Passe de saison","seasonSub":"Encore {d} jours · gagne de l’XP en jouant","tier":"Palier","free":"gratuit","freeTrack":"Gratuit","premium":"Premium","seasonPremT":"Parcours premium","seasonPremIncl":"Récompenses doublées + rayon Prisme et cadre Royal exclusifs","seasonPremOn":"Parcours premium débloqué !","seasonOnly":"Exclusif au passe de saison","tierUp":"Palier {k} atteint !","rescueT":"Pack de secours","rescueIncl":"250 ✦ + 2 × +3 coups + Révéler + Bouclier","legendT":"Set légendaire","tag_best":"MEILLEURE OFFRE","tag_limited":"LIMITÉ","cbT":"Bon retour !","cbSub":"Tu nous as manqué. Voici un cadeau pour repartir.","refillShort":"pleins","cbBundle":"Pack de retour","cbIncl":"800 ✦ + 2 de chaque bonus","fr_world":"Monde","fr_circuit":"Circuit","fr_frost":"Givre","fr_obsidian":"Obsidienne","fr_water":"Eau","fr_mashrabiya":"Moucharabieh","fr_ice":"Glace","fr_leaves":"Palmier","fr_holo":"Holo","fr_corona":"Couronne","fr_royal":"Royal","passT":"Pulse Pass","week":"semaine","subscribe":"S’abonner","passIncl":"Sans pub · cœurs illimités · +{g} ✦ chaque jour","passLeft":"Encore {d} jours","passOn":"Pulse Pass actif — profite !","passDrip":"Pulse Pass : +{g} ✦ inclus","lumiBoss":"Niveau boss ! Tu vas y arriver","lumiNew":"Oh, du nouveau !","lumiWin":"Génial !|Waouh !|Ça brille !|Bien joué !|Magnifique !","lumiLose":"Presque…|Encore !|On peut le faire !","lumiLast":"Dernier coup !","lumiHi":"Salut ! Je suis Lumi","mapTitle":"Carte du monde","enter":"Entrer dans le monde","newWorld":"Nouveau monde débloqué !","sigMech":"Nouveau ici :","wt0":"Là où naît la lumière","wt1":"Des rideaux de lumière sur un ciel gelé","wt2":"Du verre forgé dans le feu — attention","wt3":"La lumière se divise en couleurs","wt4":"La gravité courbe même la lumière","wt5":"Tout ce que tu vois n’est pas vraiment là","wt6":"La glace bouge sous tes pieds","wt7":"Deux lumières n’en font qu’une","wt8":"Ici, tout est lié","cbMode":"Symboles daltonisme","boosters":"Bonus","b_moves":"+3 coups","b_reveal":"Révéler","b_shield":"Bouclier","shieldSaved":"🛡 Le bouclier a sauvé ton cœur","t_endless":"Infini","endBtn":"∞ Infini","endOver":"Partie terminée","endScore":"{k} étapes","endBest":"Record : {b}","newBest":"Nouveau record !","endNew":"∞ Nouvelle partie · 1 ♥","endLocked":"Le mode infini se débloque au niveau {n}","stage":"Étape {k}","golden":"Éclat doré","goldGot":"Éclat doré ! +{g} ✦","goldCount":"✨ {n} éclats dorés","stats":"Statistiques","bnPerfect":"PARFAIT !","bnGreat":"SUPER !","bnClear":"RÉUSSI !","newMech":"Nouveau","practice":"Entraînement {k}/2","assist":"Aide : +{n} coup(s)","claim2":"📺 Récupérer ×2","shopFree":"Gratuit","shieldStreak":"🛡 Le bouclier a gardé ta série","guest":"Tu joues en invité","guestNote":"Enregistré sur ce téléphone uniquement","saveT":"Sauvegarde ta progression","saveSub":"Connecte-toi pour garder tes niveaux, gemmes et achats en sécurité et continuer sur n'importe quel appareil. Un seul geste.","xtraUnlock":"Nouveaux modes débloqués : Infini, Puzzle de la semaine et Pass de saison !","cloudGuest":"Désactivée · connecte-toi pour l'activer","level":"Niveau","navMap":"Carte","gateReach":"Atteins le niveau {n}","wStars":"Étoiles dans ce monde","adPrivacy":"Confidentialité des pubs","hintAdT":"Bloqué ?","hintAdSub":"Regarde une courte vidéo pour un indice gratuit.","hintAdBtn":"Indice gratuit","bossAd":"+3 coups gratuits pour ce boss"}});
 /* v1.1 strings: modes, fragile mirrors, star counter, sharing */
 for (const [l, v] of Object.entries({
-  es: { getApp: 'Descarga Pulse Nexus', shareFail: 'Compartir no está disponible ahora', starsTotal: 'estrellas', fragLeft: '↻ quedan {n}', fragLast: '¡El próximo toque lo rompe!', fragTip: 'Los espejos frágiles solo giran unas veces. El número muestra los giros que quedan; con "!" el próximo toque lo rompe.', mdClassic: 'Clásico', mdHard: 'Difícil', mdExtreme: 'Extremo', mdStage: 'Fase', mdLock1: 'Difícil se abre tras el nivel {n}', mdLock2: 'Extremo se abre tras {n} fases difíciles', mdHardSub: 'Tableros más grandes, menos movimientos extra', mdExtremeSub: 'Los tableros más duros, casi sin movimientos extra', hardOpen: '¡Nuevo: modo Difícil abierto!' },
-  pt: { getApp: 'Baixe Pulse Nexus', shareFail: 'Compartilhar não está disponível agora', starsTotal: 'estrelas', fragLeft: '↻ restam {n}', fragLast: 'O próximo toque o quebra!', fragTip: 'Espelhos frágeis só giram algumas vezes. O número mostra os giros restantes; no "!" o próximo toque o quebra.', mdClassic: 'Clássico', mdHard: 'Difícil', mdExtreme: 'Extremo', mdStage: 'Fase', mdLock1: 'Difícil abre após o nível {n}', mdLock2: 'Extremo abre após {n} fases difíceis', mdHardSub: 'Tabuleiros maiores, menos jogadas extras', mdExtremeSub: 'Os tabuleiros mais duros, quase sem jogadas extras', hardOpen: 'Novo: modo Difícil liberado!' },
-  fr: { getApp: 'Télécharger Pulse Nexus', shareFail: 'Le partage est indisponible pour le moment', starsTotal: 'étoiles', fragLeft: '↻ encore {n}', fragLast: 'Le prochain toucher le brise !', fragTip: 'Les miroirs fragiles ne tournent que quelques fois. Le chiffre indique les rotations restantes ; à « ! » le prochain toucher le brise.', mdClassic: 'Classique', mdHard: 'Difficile', mdExtreme: 'Extrême', mdStage: 'Étape', mdLock1: 'Difficile s\'ouvre après le niveau {n}', mdLock2: 'Extrême s\'ouvre après {n} étapes difficiles', mdHardSub: 'Plateaux plus grands, moins de coups en réserve', mdExtremeSub: 'Les plateaux les plus durs, presque aucun coup en réserve', hardOpen: 'Nouveau : le mode Difficile est ouvert !' },
-  tr: { getApp: 'Pulse Nexus\'u indir', shareFail: 'Paylaşım şu an kullanılamıyor', starsTotal: 'yıldız', fragLeft: '↻ {n} kaldı', fragLast: 'Sonraki dokunuş kırar!', fragTip: 'Kırılgan aynalar birkaç kez döner. Sayı kalan dönüşleri gösterir; "!" görünce sonraki dokunuş onu kırar.', mdClassic: 'Klasik', mdHard: 'Zor', mdExtreme: 'Ekstrem', mdStage: 'Aşama', mdLock1: 'Zor mod {n}. seviyeden sonra açılır', mdLock2: 'Ekstrem, {n} zor aşamadan sonra açılır', mdHardSub: 'Daha büyük tahtalar, daha az yedek hamle', mdExtremeSub: 'En zor tahtalar, neredeyse hiç yedek hamle yok', hardOpen: 'Yeni: Zor mod açıldı!' },
-  id: { getApp: 'Unduh Pulse Nexus', shareFail: 'Berbagi belum tersedia saat ini', starsTotal: 'bintang', fragLeft: '↻ sisa {n}', fragLast: 'Ketukan berikutnya memecahkannya!', fragTip: 'Cermin rapuh hanya bisa diputar beberapa kali. Angka menunjukkan sisa putaran; saat "!" ketukan berikutnya memecahkannya.', mdClassic: 'Klasik', mdHard: 'Sulit', mdExtreme: 'Ekstrem', mdStage: 'Tahap', mdLock1: 'Mode Sulit terbuka setelah level {n}', mdLock2: 'Ekstrem terbuka setelah {n} tahap Sulit', mdHardSub: 'Papan lebih besar, langkah cadangan lebih sedikit', mdExtremeSub: 'Papan tersulit, hampir tanpa langkah cadangan', hardOpen: 'Baru: mode Sulit terbuka!' },
-  hi: { getApp: 'Pulse Nexus डाउनलोड करें', shareFail: 'अभी शेयर करना उपलब्ध नहीं है', starsTotal: 'तारे', fragLeft: '↻ {n} बाकी', fragLast: 'अगला टैप इसे तोड़ देगा!', fragTip: 'नाज़ुक दर्पण कुछ ही बार घूमते हैं। संख्या बाकी घुमाव दिखाती है; "!" पर अगला टैप इसे तोड़ देगा।', mdClassic: 'क्लासिक', mdHard: 'कठिन', mdExtreme: 'एक्सट्रीम', mdStage: 'चरण', mdLock1: 'कठिन मोड लेवल {n} के बाद खुलेगा', mdLock2: 'एक्सट्रीम {n} कठिन चरणों के बाद खुलेगा', mdHardSub: 'बड़े बोर्ड, कम अतिरिक्त चालें', mdExtremeSub: 'सबसे कठिन बोर्ड, लगभग कोई अतिरिक्त चाल नहीं', hardOpen: 'नया: कठिन मोड खुल गया!' }
+  en: { nearMiss1: 'Only 1 move away from solving!', nearMiss2: 'Only {n} moves away from solving!' },
+  ar: { nearMiss1: 'تفصلك حركة واحدة فقط عن الحل!', nearMiss2: 'تفصلك حركتان فقط عن الحل!' },
+  es: { nearMiss1: '¡A solo 1 movimiento de resolverlo!', nearMiss2: '¡A solo {n} movimientos de resolverlo!', getApp: 'Descarga Pulse Nexus', shareFail: 'Compartir no está disponible ahora', starsTotal: 'estrellas', fragLeft: '↻ quedan {n}', fragLast: '¡El próximo toque lo rompe!', fragTip: 'Los espejos frágiles solo giran unas veces. El número muestra los giros que quedan; con "!" el próximo toque lo rompe.', mdClassic: 'Clásico', mdHard: 'Difícil', mdExtreme: 'Extremo', mdStage: 'Fase', mdLock1: 'Difícil se abre tras el nivel {n}', mdLock2: 'Extremo se abre tras {n} fases difíciles', mdHardSub: 'Tableros más grandes, menos movimientos extra', mdExtremeSub: 'Los tableros más duros, casi sin movimientos extra', hardOpen: '¡Nuevo: modo Difícil abierto!' },
+  pt: { nearMiss1: 'A apenas 1 jogada da solução!', nearMiss2: 'A apenas {n} jogadas da solução!', getApp: 'Baixe Pulse Nexus', shareFail: 'Compartilhar não está disponível agora', starsTotal: 'estrelas', fragLeft: '↻ restam {n}', fragLast: 'O próximo toque o quebra!', fragTip: 'Espelhos frágeis só giram algumas vezes. O número mostra os giros restantes; no "!" o próximo toque o quebra.', mdClassic: 'Clássico', mdHard: 'Difícil', mdExtreme: 'Extremo', mdStage: 'Fase', mdLock1: 'Difícil abre após o nível {n}', mdLock2: 'Extremo abre após {n} fases difíceis', mdHardSub: 'Tabuleiros maiores, menos jogadas extras', mdExtremeSub: 'Os tabuleiros mais duros, quase sem jogadas extras', hardOpen: 'Novo: modo Difícil liberado!' },
+  fr: { nearMiss1: 'À 1 seul coup de la solution !', nearMiss2: 'À seulement {n} coups de la solution !', getApp: 'Télécharger Pulse Nexus', shareFail: 'Le partage est indisponible pour le moment', starsTotal: 'étoiles', fragLeft: '↻ encore {n}', fragLast: 'Le prochain toucher le brise !', fragTip: 'Les miroirs fragiles ne tournent que quelques fois. Le chiffre indique les rotations restantes ; à « ! » le prochain toucher le brise.', mdClassic: 'Classique', mdHard: 'Difficile', mdExtreme: 'Extrême', mdStage: 'Étape', mdLock1: 'Difficile s\'ouvre après le niveau {n}', mdLock2: 'Extrême s\'ouvre après {n} étapes difficiles', mdHardSub: 'Plateaux plus grands, moins de coups en réserve', mdExtremeSub: 'Les plateaux les plus durs, presque aucun coup en réserve', hardOpen: 'Nouveau : le mode Difficile est ouvert !' },
+  tr: { nearMiss1: 'Çözüme sadece 1 hamle kaldı!', nearMiss2: 'Çözüme sadece {n} hamle kaldı!', getApp: 'Pulse Nexus\'u indir', shareFail: 'Paylaşım şu an kullanılamıyor', starsTotal: 'yıldız', fragLeft: '↻ {n} kaldı', fragLast: 'Sonraki dokunuş kırar!', fragTip: 'Kırılgan aynalar birkaç kez döner. Sayı kalan dönüşleri gösterir; "!" görünce sonraki dokunuş onu kırar.', mdClassic: 'Klasik', mdHard: 'Zor', mdExtreme: 'Ekstrem', mdStage: 'Aşama', mdLock1: 'Zor mod {n}. seviyeden sonra açılır', mdLock2: 'Ekstrem, {n} zor aşamadan sonra açılır', mdHardSub: 'Daha büyük tahtalar, daha az yedek hamle', mdExtremeSub: 'En zor tahtalar, neredeyse hiç yedek hamle yok', hardOpen: 'Yeni: Zor mod açıldı!' },
+  id: { nearMiss1: 'Tinggal 1 langkah lagi untuk menang!', nearMiss2: 'Tinggal {n} langkah lagi untuk menang!', getApp: 'Unduh Pulse Nexus', shareFail: 'Berbagi belum tersedia saat ini', starsTotal: 'bintang', fragLeft: '↻ sisa {n}', fragLast: 'Ketukan berikutnya memecahkannya!', fragTip: 'Cermin rapuh hanya bisa diputar beberapa kali. Angka menunjukkan sisa putaran; saat "!" ketukan berikutnya memecahkannya.', mdClassic: 'Klasik', mdHard: 'Sulit', mdExtreme: 'Ekstrem', mdStage: 'Tahap', mdLock1: 'Mode Sulit terbuka setelah level {n}', mdLock2: 'Ekstrem terbuka setelah {n} tahap Sulit', mdHardSub: 'Papan lebih besar, langkah cadangan lebih sedikit', mdExtremeSub: 'Papan tersulit, hampir tanpa langkah cadangan', hardOpen: 'Baru: mode Sulit terbuka!' },
+  hi: { nearMiss1: 'हल से बस 1 चाल दूर!', nearMiss2: 'हल से बस {n} चालें दूर!', getApp: 'Pulse Nexus डाउनलोड करें', shareFail: 'अभी शेयर करना उपलब्ध नहीं है', starsTotal: 'तारे', fragLeft: '↻ {n} बाकी', fragLast: 'अगला टैप इसे तोड़ देगा!', fragTip: 'नाज़ुक दर्पण कुछ ही बार घूमते हैं। संख्या बाकी घुमाव दिखाती है; "!" पर अगला टैप इसे तोड़ देगा।', mdClassic: 'क्लासिक', mdHard: 'कठिन', mdExtreme: 'एक्सट्रीम', mdStage: 'चरण', mdLock1: 'कठिन मोड लेवल {n} के बाद खुलेगा', mdLock2: 'एक्सट्रीम {n} कठिन चरणों के बाद खुलेगा', mdHardSub: 'बड़े बोर्ड, कम अतिरिक्त चालें', mdExtremeSub: 'सबसे कठिन बोर्ड, लगभग कोई अतिरिक्त चाल नहीं', hardOpen: 'नया: कठिन मोड खुल गया!' }
 })) Object.assign(STR[l] || (STR[l] = {}), v);
 
 const LANGS = [['en', 'EN'], ['ar', 'عربي'], ['es', 'ES'], ['pt', 'PT'], ['fr', 'FR'], ['tr', 'TR'], ['id', 'ID'], ['hi', 'हिं']];
@@ -1608,6 +1703,7 @@ function interstitialOk(n, now) {
   if (!CFG.ADS_ENABLED || S.premium || passActive() || payerNoAds()) return false;        // paid players: a payer is worth far more than an ad
   if (now - (S.firstSeen || now) < CFG.INTERSTITIAL_GRACE_H * 3600000) return false;         // never on the player's first day
   if (now - SES.t0 < CFG.SESSION_GRACE_MS) return false;                                  // let a session warm up before the first forced ad
+  if (typeof game !== 'undefined' && game && (game.rwWatched || game.conts > 0 || game.fails > 0)) return false; // fairness: never punish a hard-earned retry/continue or a level where a voluntary rewarded ad was already watched
   const d = dayNum(); if (!S.ia || S.ia.day !== d) S.ia = { day: d, c: 0 };
   if (S.ia.c >= CFG.INTERSTITIAL_MAX_DAY) return false;                                      // daily cap
   return n >= (CFG.AB_INTERSTITIAL_FROM[S.abI] || CFG.INTERSTITIAL_FROM) && S.sinceAd >= CFG.INTERSTITIAL_EVERY && now - S.lastAd > CFG.INTERSTITIAL_COOLDOWN_MS && now - S.lastRewardedTs > CFG.REWARDED_GRACE_MS;
@@ -1643,15 +1739,16 @@ const sound = {
     if (!this.pan || !this.ctx.createStereoPanner) return this.out;
     const p = this.ctx.createStereoPanner(); p.pan.value = Math.max(-.8, Math.min(.8, this.pan)); p.connect(this.out); return p;
   },
+  clean(src, ...ns) { src.onended = () => { for (const n of ns) if (n && n !== this.out && n !== this.ctx.destination) try { n.disconnect(); } catch (e) {} }; },
   at(pan, fn) { this.pan = pan; try { fn(); } finally { this.pan = 0; } },
   init() { if (!S.sound || !this.ready) return false; return this.ensure(); },
   tone(f, type, d, v, delay, to) {
     if (!this.init()) return;
     try {
-      const c = this.ctx, o = c.createOscillator(), g = c.createGain(), t0 = c.currentTime + (delay || 0);
+      const c = this.ctx, o = c.createOscillator(), g = c.createGain(), t0 = c.currentTime + (delay || 0), dst = this.out ? this.dest() : c.destination;
       o.type = type || 'sine'; o.frequency.setValueAtTime(f, t0); if (to) o.frequency.exponentialRampToValueAtTime(to, t0 + d);
       g.gain.setValueAtTime(v || .1, t0); g.gain.exponentialRampToValueAtTime(.001, t0 + d);
-      o.connect(g); g.connect(this.out ? this.dest() : c.destination); o.start(t0); o.stop(t0 + d + .05);
+      o.connect(g); g.connect(dst); this.clean(o, o, g, dst); o.start(t0); o.stop(t0 + d + .05);
     } catch (e) {}
   },
   noise(d, v, lp, type) {
@@ -1659,9 +1756,9 @@ const sound = {
     try {
       const c = this.ctx, n = Math.floor(c.sampleRate * d), b = c.createBuffer(1, n, c.sampleRate), a = b.getChannelData(0);
       for (let i = 0; i < n; i++) { const k = 1 - i / n; a[i] = (Math.random() * 2 - 1) * k * k; }
-      const s = c.createBufferSource(), g = c.createGain(), f = c.createBiquadFilter();
+      const s = c.createBufferSource(), g = c.createGain(), f = c.createBiquadFilter(), dst = this.out ? this.dest() : c.destination;
       f.type = type || 'lowpass'; f.frequency.value = lp || 20000; g.gain.value = v || .15;
-      s.buffer = b; s.connect(f); f.connect(g); g.connect(this.out ? this.dest() : c.destination); s.start();
+      s.buffer = b; s.connect(f); f.connect(g); g.connect(dst); this.clean(s, s, f, g, dst); s.start();
     } catch (e) {}
   },
   key(deg, oct) {         // scale degree → Hz in the current world's key (root kept in a warm 170–400 Hz band)
@@ -1674,11 +1771,12 @@ const sound = {
   nt(f, d, v, delay, type) {  // soft-attack note with a quiet 2nd partial (no clicks, no harsh highs)
     if (!this.init()) return;
     try {
-      const c = this.ctx, t0 = c.currentTime + (delay || 0), g = c.createGain();
+      const c = this.ctx, t0 = c.currentTime + (delay || 0), g = c.createGain(), dst = this.dest();
       g.gain.setValueAtTime(.0001, t0); g.gain.exponentialRampToValueAtTime(v, t0 + .006); g.gain.exponentialRampToValueAtTime(.0001, t0 + d);
-      g.connect(this.dest());
+      g.connect(dst);
       const o = c.createOscillator(); o.type = type || 'sine'; o.frequency.value = f; o.connect(g); o.start(t0); o.stop(t0 + d + .05);
-      if (f * 2 < 1500) { const o2 = c.createOscillator(), g2 = c.createGain(); o2.frequency.value = f * 2; g2.gain.value = .14; o2.connect(g2); g2.connect(g); o2.start(t0); o2.stop(t0 + d + .05); }
+      if (f * 2 < 1500) { const o2 = c.createOscillator(), g2 = c.createGain(); o2.frequency.value = f * 2; g2.gain.value = .14; o2.connect(g2); g2.connect(g); o2.start(t0); o2.stop(t0 + d + .05); this.clean(o, o, o2, g2, g, dst); }
+      else this.clean(o, o, g, dst);
     } catch (e) {}
   },
   whoosh(d, v, f0, f1) {     // filtered air sweep (mirror turning)
@@ -1686,9 +1784,9 @@ const sound = {
     try {
       const c = this.ctx, n = Math.floor(c.sampleRate * d), b = c.createBuffer(1, n, c.sampleRate), a = b.getChannelData(0);
       for (let i = 0; i < n; i++) a[i] = (Math.random() * 2 - 1) * Math.sin(Math.PI * i / n);
-      const src = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain(), t0 = c.currentTime;
+      const src = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain(), t0 = c.currentTime, dst = this.dest();
       f.type = 'bandpass'; f.Q.value = 1.4; f.frequency.setValueAtTime(f0, t0); f.frequency.exponentialRampToValueAtTime(f1, t0 + d);
-      g.gain.value = v; src.buffer = b; src.connect(f); f.connect(g); g.connect(this.dest()); src.start(t0);
+      g.gain.value = v; src.buffer = b; src.connect(f); f.connect(g); g.connect(dst); this.clean(src, src, f, g, dst); src.start(t0);
     } catch (e) {}
   },
   tapN: 0,
@@ -1696,11 +1794,14 @@ const sound = {
     this.tapN++; const f = this.key(deg == null ? this.tapN % 6 : deg, 1);
     this.nt(f, .16, .05, 0, 'triangle'); this.whoosh(.11, .05, 380, 1100); this.noise(.012, .025, 1600);
   },
-  lock() {                   // target lit: quick major/minor triad + soft low thump
-    const r = this.key(0, 1), th = this.third();
-    [1, th, 3 / 2].forEach((k, i) => this.nt(r * k, .7, .055, i * .055));
-    this.tone(this.key(0, -1), 'sine', .22, .09, 0, this.key(0, -2));
+  lock(k = 0, total = 1) {   // target lit: ascending harmonic chord per target + full octave bloom on final target
+    const idx = Math.max(0, k | 0), r = this.key(idx * 2, 1), th = this.third();
+    const notes = idx > 0 ? [1, th, 3 / 2, 2] : [1, th, 3 / 2];
+    notes.forEach((m, i) => this.nt(r * m, .72, .052, i * .05));
+    if (total > 1 && idx + 1 >= total) [1, th, 3 / 2, 2].forEach(m => this.nt(this.key(0, 1) * m, 1.05, .028, .18));
+    this.tone(this.key(idx, -1), 'sine', .22, .085, 0, this.key(0, -2));
   },
+  prism(k = 0) { this.nt(this.key((k % 5) + 2, 1) * 1.5, .24, .024, 0, 'sine'); },
   crystal(k) { this.nt(this.key(2 + k * 2, 1), .9, .05); this.nt(this.key(4 + k * 2, 1), .9, .025, .07); },
   err() { this.nt(this.key(1, -1), .18, .07, 0, 'triangle'); this.nt(this.key(0, -1), .3, .07, .09, 'triangle'); this.noise(.04, .03, 500); },
   lose() { [4, 2, 0].forEach((d, i) => this.nt(this.key(d, 0), .5, .065, i * .13, 'triangle')); this.tone(this.key(0, -2), 'sine', .6, .07, .3, this.key(0, -2) * .8); },
@@ -1737,7 +1838,7 @@ const sound = {
 /* =========================================================================
    MUSIC — generative ambient, tuned to A4 = 432 Hz family.
    Each world has its own drone root (Hz). Notes come from a just-intonation
-   pentatonic built on that root (ratios 1, 9/8, 5/4, 3/2, 5/3) so everything
+   pentatonic built on that root (ratios 1, 9/8, 5/4, 3 / 2, 5 / 3) so everything
    stays consonant: slow pad + sparse bells through a long reverb.
    ========================================================================= */
 const Music = {
@@ -1789,7 +1890,9 @@ const Music = {
       const o = c.createOscillator(), g = c.createGain(), lp = c.createBiquadFilter(), t0 = now + i * (.6 + Math.random() * 1.2), peak = .035 + Math.random() * .015;
       o.type = 'sine'; o.frequency.value = f; lp.type = 'lowpass'; lp.frequency.value = th.lp;
       g.gain.setValueAtTime(.0001, t0); g.gain.exponentialRampToValueAtTime(peak, t0 + dur * .38); g.gain.exponentialRampToValueAtTime(.0001, t0 + dur);
-      o.connect(lp); lp.connect(g); g.connect(this.bus); o.start(t0); o.stop(t0 + dur + .2);
+      o.connect(lp); lp.connect(g); g.connect(this.bus);
+      o.onended = () => { try { o.disconnect(); lp.disconnect(); g.disconnect(); } catch (e) {} };
+      o.start(t0); o.stop(t0 + dur + .2);
     });
     this.stimer = setTimeout(() => this.swell(), 6500 + Math.random() * 5000);
   },
@@ -1799,16 +1902,18 @@ const Music = {
     const o = c.createOscillator(), o2 = c.createOscillator(), g2 = c.createGain(); o.type = o2.type = 'sine'; o.frequency.value = f; o2.frequency.value = f * th.pr; g2.gain.value = f * th.pr > 900 ? 0 : th.pg;
     o.connect(g); o2.connect(g2); g2.connect(g);
     let out = g; if (c.createStereoPanner) { const p = c.createStereoPanner(); p.pan.value = Math.random() * 1.2 - .6; g.connect(p); out = p; }
-    out.connect(this.bus); o.start(t); o2.start(t); o.stop(t + th.dec + .3); o2.stop(t + th.dec + .3);
+    out.connect(this.bus);
+    o.onended = () => { try { o.disconnect(); o2.disconnect(); g2.disconnect(); g.disconnect(); if (out !== g) out.disconnect(); } catch (e) {} };
+    o.start(t); o2.start(t); o.stop(t + th.dec + .3); o2.stop(t + th.dec + .3);
   },
   voice(kind, f, vol, delay) {     // one melody note in the world's timbre
     if (!this.master) return; const c = sound.ctx, th = this.W(), t = c.currentTime + (delay || 0);
-    const g = c.createGain(), lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = kind === 'pluck' ? 650 : (kind === 'deep' ? 420 : 1400);
-    let pan = null; if (c.createStereoPanner) { pan = c.createStereoPanner(); pan.pan.value = Math.random() * 1.2 - .6; }
+    const g = c.createGain(), lp = c.createBiquadFilter(), ns = [g, lp]; lp.type = 'lowpass'; lp.frequency.value = kind === 'pluck' ? 650 : (kind === 'deep' ? 420 : 1400);
+    let pan = null; if (c.createStereoPanner) { pan = c.createStereoPanner(); pan.pan.value = Math.random() * 1.2 - .6; ns.push(pan); }
     g.connect(lp); (pan ? (lp.connect(pan), pan) : lp).connect(this.bus);
     const atk = { glass: .55, deep: 1.2, pluck: .008, shimmer: .05 }[kind] || .09, dec = th.dec;
     g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + atk); g.gain.exponentialRampToValueAtTime(.0001, t + atk + dec);
-    const osc = (type, fr, gain, det) => { const o = c.createOscillator(), og = c.createGain(); o.type = type; o.frequency.value = fr; if (det) o.detune.value = det; og.gain.value = gain; o.connect(og); og.connect(g); o.start(t); o.stop(t + atk + dec + .3); return o; };
+    const osc = (type, fr, gain, det) => { const o = c.createOscillator(), og = c.createGain(); o.type = type; o.frequency.value = fr; if (det) o.detune.value = det; og.gain.value = gain; o.connect(og); og.connect(g); ns.push(o, og); o.onended = () => { while (ns.length) try { ns.pop().disconnect(); } catch (e) {} }; o.start(t); o.stop(t + atk + dec + .3); return o; };
     if (kind === 'pluck') { osc('triangle', f, 1); osc('sine', f * 2, .12); }
     else if (kind === 'shimmer') { osc('sine', f, .7, -5); osc('sine', f, .7, 5); }
     else if (kind === 'deep') { const o = osc('sine', f, 1); o.frequency.setValueAtTime(f, t); o.frequency.linearRampToValueAtTime(f * (Math.random() < .5 ? .985 : 1.015), t + atk + dec); osc('sine', f * 1.5, .06); }
@@ -1871,7 +1976,7 @@ const Monetization = {
     Analytics.track('ad_rewarded_show', { placement });
     const st = S.adStats[placement] || (S.adStats[placement] = { show: 0, done: 0 }); st.show++;
     const ok = await this._rewarded(placement);
-    if (ok) { st.done++; S.lastRewardedTs = Date.now(); rwDay().c++; if (placement === 'hint') rwDay().hint++; }
+    if (ok) { st.done++; S.lastRewardedTs = Date.now(); if (typeof game !== 'undefined' && game && (game.state === 'playing' || game.state === 'lost')) game.rwWatched = true; rwDay().c++; if (placement === 'hint') rwDay().hint++; }
     persist();
     Analytics.track(ok ? 'ad_rewarded_done' : 'ad_rewarded_fail', { placement });
     return ok;
@@ -1988,9 +2093,12 @@ class Game {
     this.cv = $('#cv'); this.ctx = this.cv.getContext('2d'); liteCtx(this.ctx);
     this.bg = $('#bg'); this.bgc = this.bg.getContext('2d'); liteCtx(this.bgc); this.wm = $('#wmap'); this.title = $('#title'); this.th = THEMES[0]; this.stars = null;
     new ResizeObserver(() => this.resizeBg()).observe($('#app')); this.resizeBg();
-    this.particles = []; this.shake = 0; this.state = 'idle'; this.pending = null; this.hintCell = -1; this.hintUntil = 0;
+    this.particles = []; this.shake = 0; this.state = 'idle'; this.pending = null; this.hintCell = -1; this.hintUntil = 0; this.press = null;
     this.beamLen = 0; this.beamTotal = 0; this.beamSpeed = 14; this.res = null; this.L = null;
-    this.cv.addEventListener('pointerdown', e => { e.preventDefault(); sound.init(); this.onPointer(e); });
+    this.cv.addEventListener('pointerdown', e => { e.preventDefault(); sound.init(); try { this.cv.setPointerCapture(e.pointerId); } catch (x) {} this.onDown(e); });   // capture: pointerup always reaches the canvas, so a press can never stay "held" (which would keep the loop at 60 fps)
+    this.cv.addEventListener('pointermove', e => this.onMove(e));
+    this.cv.addEventListener('pointerup', () => this.onUp());
+    this.cv.addEventListener('pointercancel', () => { this.press = null; });
     new ResizeObserver(() => this.resize()).observe($('#stage'));
     this.resize();
     this.last = performance.now(); requestAnimationFrame(tm => this.loop(tm));
@@ -2026,10 +2134,10 @@ class Game {
     this.dead = new Uint8Array(this.L.mirrors.length); this.life = Uint8Array.from(this.L.mirrors.map(m => m.life || 0)); this.rings = []; this.slowUntil = 0; this.flash = 0; this.fails = 0;
     const assist = daily ? 0 : Math.min(2, Math.floor((S.fails[n] || 0) / CFG.ASSIST_AFTER_FAILS));
     const tune = mode === 'normal' && TUNE[n] ? (TUNE[n].slack | 0) : 0;
-    this.assist = assist; this.movesLeft = Math.max(this.L.min, this.L.allowed + assist + tune); this.used = 0; this.undoStack = []; this.hints = 0;
-    this.state = 'playing'; this.pending = null; this.particles = []; this.res = null; this.hintCell = -1;
+    this.assist = assist; this.movesLeft = Math.max(this.L.min, this.L.allowed + assist + tune); this.used = 0; this.undoStack = []; this.hints = 0; this.freeUndo = 1; this.rwWatched = false; this.nearMiss = 0;
+    this.state = 'playing'; this.pending = null; this.press = null; this.particles = []; this.res = null; this.hintCell = -1; this.hintUntil = 0;
     this.applyTheme(this.tier ? tierDifficulty(this.tier, this.n) : this.n);
-    this.mRot = Uint8Array.from(this.rots); this.mT = new Float32Array(this.rots.length); this.mA = new Float32Array(this.rots.length);
+    this.mRot = Uint8Array.from(this.rots); this.mT = new Float32Array(this.rots.length); this.mA = new Float32Array(this.rots.length); this.mHitAt = new Float64Array(this.rots.length);
     for (let i = 0; i < this.rots.length; i++) this.mT[i] = this.mA[i] = Math.PI / 4 + this.rots[i] * Math.PI / 2;
     this.calcGrid(); this.recompute(false);
     this.introAt = performance.now(); this.beamLen = 0; this.beamHold = this.introAt + 140 + (this.L.cols + this.L.rows) * 30 + 260;
@@ -2206,10 +2314,45 @@ class Game {
       this.showLit = new Set([...(this.showLit || [])].filter(id => res.r.lit.has(id)));
       this.showCry = new Set([...(this.showCry || [])].filter(id => res.r.crys.has(id)));
       this.arrivals = [];
-      res.r.lit.forEach(id => { if (this.showLit.has(id)) return; const r = reach.get(id) || { i: 0, d: 0 }; this.arrivals.push({ i: r.i, d: r.d, fn: () => {
-        this.showLit.add(id); this.burst(id, '#34d399', 18); sound.at((id % L.cols + .5) / L.cols * 2 - 1, () => sound.lock()); this.hitStop = performance.now() + 70; this.punch = 1; const p = this.cpx(id); this.floats.push({ x: p.x, y: p.y - this.cs * .5, text: '✓', col: '#34d399', t0: performance.now() }); } }); });
+      res.r.lit.forEach(id => { if (this.showLit.has(id)) return; const r = reach.get(id) || { i: 0, d: 0 }, tc = L.colorMode ? L.tcol[id] : 0, tCol = tc ? bcss(tc) : '#34d399'; this.arrivals.push({ i: r.i, d: r.d, fn: () => {
+        this.showLit.add(id); this.burst(id, tCol, 22); const p = this.cpx(id); this.rings.push({ x: p.x, y: p.y, r: this.cs * .22, life: .65, col: tCol });
+        sound.at((id % L.cols + .5) / L.cols * 2 - 1, () => sound.lock(this.showLit.size - 1, L.targets.length)); this.hitStop = performance.now() + 70; this.punch = 1; this.floats.push({ x: p.x, y: p.y - this.cs * .5, text: '✓', col: tCol, t0: performance.now() }); } }); });
       res.r.crys.forEach(id => { if (this.showCry.has(id)) return; const r = reach.get(id) || { i: 0, d: 0 }; this.arrivals.push({ i: r.i, d: r.d, cry: 1, fn: () => {
-        this.showCry.add(id); this.burst(id, '#fbbf24', 12); sound.at((id % L.cols + .5) / L.cols * 2 - 1, () => sound.crystal(this.showCry.size - 1)); this.hitStop = performance.now() + 45; const p = this.cpx(id); this.floats.push({ x: p.x, y: p.y - this.cs * .5, text: this.showCry.size + '/' + L.crystals.length, col: '#fbbf24', t0: performance.now() }); } }); });
+        this.showCry.add(id); this.burst(id, '#fbbf24', 14); sound.at((id % L.cols + .5) / L.cols * 2 - 1, () => sound.crystal(this.showCry.size - 1)); this.hitStop = performance.now() + 45; const p = this.cpx(id); this.floats.push({ x: p.x, y: p.y - this.cs * .5, text: this.showCry.size + '/' + L.crystals.length, col: '#fbbf24', t0: performance.now() }); } }); });
+      // optical refraction arrivals along newly grown beam segments (mirror bounces, prism splitters, colour filters, portals)
+      if (!PERF.lite) {
+        let fxN = 0; const seenFx = new Set();
+        P.forEach((p, i) => {
+          const b0 = this.bp[i] || 0; let a = 0;
+          for (let k = 1; k < p.length && fxN < 10; k++) {
+            const u = p[k], pr = p[k - 1];
+            if (!u.jump) a += Math.hypot(u.x - pr.x, u.y - pr.y);
+            if (a <= b0 + .05) continue;
+            if (u.jump) {
+              const key = 'po|' + Math.round(u.x) + ',' + Math.round(u.y); if (seenFx.has(key)) continue; seenFx.add(key); fxN++;
+              const pIn = { x: this.ox + (pr.x + .5) * this.cs, y: this.oy + (pr.y + .5) * this.cs }, pOut = { x: this.ox + (u.x + .5) * this.cs, y: this.oy + (u.y + .5) * this.cs };
+              this.arrivals.push({ i, d: a, fn: () => { this.rings.push({ x: pIn.x, y: pIn.y, r: this.cs * .16, life: .45, col: '#c084fc' }); this.rings.push({ x: pOut.x, y: pOut.y, r: this.cs * .16, life: .5, col: '#f43f5e' }); if (this.mode !== 'demo') sound.portal(); } });
+              continue;
+            }
+            if (u.x !== Math.round(u.x) || u.y !== Math.round(u.y)) continue;
+            const gx = u.y === L.srow ? ((u.x - (L.soff || 0)) % L.cols + L.cols) % L.cols : u.x, id = u.y * L.cols + gx, kd = L.kind[id];
+            const bCol = L.colorMode ? bcss(u.col) : (this.th ? this.th.c : '#22d3ee');
+            if (kd === K.MIRROR && k < p.length - 1) {
+              const nx = p[k + 1], dx1 = Math.sign(u.x - pr.x), dy1 = Math.sign(u.y - pr.y), dx2 = Math.sign(nx.x - u.x), dy2 = Math.sign(nx.y - u.y);
+              if (dx1 !== dx2 || dy1 !== dy2) {
+                const mi = L.ref[id]; fxN++;
+                this.arrivals.push({ i, d: a, fn: () => { if (this.mHitAt && mi >= 0) this.mHitAt[mi] = performance.now(); this.refractBurst(id, dx2 - dx1, dy2 - dy1, bCol, 6); } });
+              }
+            } else if (kd === K.SPLIT && k === p.length - 1) {
+              const key = 'sp|' + id; if (seenFx.has(key)) continue; seenFx.add(key); fxN++;
+              this.arrivals.push({ i, d: a, fn: () => { this.refractBurst(id, pr.y - u.y, u.x - pr.x, '#e9d5ff', 5); this.refractBurst(id, u.y - pr.y, pr.x - u.x, '#38bdf8', 5); if (this.mode !== 'demo') sound.prism(i); } });
+            } else if (kd === K.FILTER) {
+              const key = 'fl|' + id; if (seenFx.has(key)) continue; seenFx.add(key); fxN++;
+              this.arrivals.push({ i, d: a, fn: () => { this.refractBurst(id, Math.sign(u.x - pr.x), Math.sign(u.y - pr.y), bcss(u.col), 7); if (this.mode !== 'demo') sound.prism(u.col); } });
+            }
+          }
+        });
+      }
       if (res.broken && !prev.broken) {     // the glass shatters when the light reaches the last crystal
         const shat = () => { this.glassGone = true; L.glass.forEach(id => this.burst(id, '#bae6fd', 34, true)); sound.shatter(); Music.duck(900); this.shake = .5; this.punch = 1.4; this.hitStop = performance.now() + 90; vib(30); };
         let last = null; this.arrivals.forEach(a => { if (a.cry && (!last || a.d > last.d)) last = a; });
@@ -2240,17 +2383,33 @@ class Game {
   starsAt(used) {
     // 3 stars at the true minimum, 2 within the first third of the spare moves (at least one), 1 for any clear
     const L = this.L, m = L.min, lim2 = Math.min(L.allowed, m + Math.max(1, Math.round(L.slack / 3)));
-    let st = used <= m ? 3 : (used <= lim2 ? 2 : 1);
-    if (this.hints > 0) st = Math.min(st, 2);
-    return st;
+    return used <= m ? 3 : (used <= lim2 ? 2 : 1);
   }
-  onPointer(e) {
-    if (!this.L) return;
-    if (this.state === 'won' && !this.pending && !this.endless && !$('#overlay').classList.contains('show')) { UI.afterWinNext(); return; }   // finished board with no card on top: a tap goes on to the next level
+  cellAt(e) {
     const r = this.cv.getBoundingClientRect();
-    const cx = Math.floor((e.clientX - r.left - this.ox) / this.cs), cy = Math.floor((e.clientY - r.top - this.oy) / this.cs);
-    this.tapCell(cx, cy);
+    return { cx: Math.floor((e.clientX - r.left - this.ox) / this.cs), cy: Math.floor((e.clientY - r.top - this.oy) / this.cs) };
   }
+  onDown(e) {
+    if (!this.L) return;
+    if (this.state === 'won' && !this.pending && !this.endless && !$('#overlay').classList.contains('show')) { this.press = { winNext: true, x0: e.clientX, y0: e.clientY }; return; }
+    if (this.state !== 'playing') return;
+    const { cx, cy } = this.cellAt(e), L = this.L;
+    if (cx < 0 || cy < 0 || cx >= L.cols || cy >= L.rows) { this.press = null; return; }
+    this.press = { cx, cy, id: cy * L.cols + cx, x0: e.clientX, y0: e.clientY };
+  }
+  onMove(e) {
+    if (!this.press) return;
+    const p = this.press, slop = Math.max(24, (this.cs || 48) * .65);
+    if (Math.hypot(e.clientX - p.x0, e.clientY - p.y0) > slop) { this.press = null; return; }
+    if (!p.winNext && this.L) { const { cx, cy } = this.cellAt(e); if (cx !== p.cx || cy !== p.cy) this.press = null; }
+  }
+  onUp() {
+    const p = this.press; this.press = null;
+    if (!p || !this.L) return;
+    if (p.winNext) { if (this.state === 'won' && !this.pending && !this.endless && !$('#overlay').classList.contains('show')) UI.afterWinNext(); return; }
+    this.tapCell(p.cx, p.cy);
+  }
+  onPointer(e) { this.onDown(e); this.onUp(); }
   tapCell(cx, cy) {
     if (this.state !== 'playing') return;
     const L = this.L;
@@ -2282,10 +2441,21 @@ class Game {
   doUndo() {
     if (this.state !== 'playing') return;
     if (!this.undoStack.length) { toast(t('nothingUndo')); return; }
-    if (S.tok.undo > 0) S.tok.undo--; else { if (S.gems < CFG.UNDO_COST) { UI.needGems(); return; } S.gems -= CFG.UNDO_COST; }
+    if (this.freeUndo > 0) this.freeUndo--;
+    else if (S.tok.undo > 0) S.tok.undo--;
+    else { if (S.gems < CFG.UNDO_COST) { UI.needGems(); return; } S.gems -= CFG.UNDO_COST; }
     persist();
     const u = this.undoStack.pop(); if (u.k === 'm') { this.rots[u.i] = u.rot; this.life[u.i] = u.life; this.dead[u.i] = u.dead; const pl = this.L.mirrors[u.i].link; if (pl >= 0) this.rots[pl] = u.prot; } else if (u.k === 's') { this.off = (this.off - 1 + this.L.cols) % this.L.cols; this.offT--; } else this.em = u.prev;
     this.movesLeft++; this.used--; this.recompute(true); UI.hud();
+  }
+  resetBoard() {
+    if (this.state !== 'playing' || !this.L || !this.used) return;
+    const L = this.L;
+    this.rots = Uint8Array.from(L.initRots); this.em = L.initEm;
+    if (L.srow >= 0) { const d = ((L.initOff || 0) - this.off) % L.cols; this.off = L.initOff || 0; this.offT += d; L.soff = this.off; }
+    this.dead.fill(0); this.life = Uint8Array.from(L.mirrors.map(m => m.life || 0));
+    this.movesLeft += this.used; this.used = 0; this.undoStack = []; this.press = null; this.melodyDegs = [];
+    sound.whoosh(.18, .06, 700, 320); vib(10); this.recompute(true); UI.hud();
   }
   frozen() {        // fragile mirrors with no taps left: the next tap shatters them, so the solver must not plan on rotating them
     const f = new Uint8Array(this.rots.length); let any = false;
@@ -2306,7 +2476,7 @@ class Game {
     toast(t('hintDone')); this.recompute(true); UI.hud();
   }
   startDemo() {
-    const list = [60, 257, 307, 357, 120, 410, 206, 156]; this.demoI = ((this.demoI == null ? Math.floor(Math.random() * list.length) : this.demoI + 1)) % list.length;
+    const list = [62, 92, 107, 117, 127, 137, 82, 145]; this.demoI = ((this.demoI == null ? Math.floor(Math.random() * list.length) : this.demoI + 1)) % list.length;
     this.start(list[this.demoI], { mode: 'demo' });
   }
   demoStep() {
@@ -2332,7 +2502,7 @@ class Game {
     this.hintCell = cell; this.hintUntil = performance.now() + 1400; this.recompute(true); UI.hud();
   }
   contCost() { const a = CFG.CONTINUE_COSTS || [CFG.CONTINUE_COST]; return a[Math.min(a.length - 1, this.conts || 0)]; }
-  continueWith() { this.conts = (this.conts || 0) + 1; if (this.heartLost) addHeart(1); this.heartLost = false; if (this.endless) this.endRun.cont++; this.state = 'playing'; this.movesLeft += CFG.CONTINUE_MOVES; UI.closeModal(); UI.hud(); }
+  continueWith() { this.conts = (this.conts || 0) + 1; this.nearMiss = 0; this.hintUntil = 0; if (this.heartLost) addHeart(1); this.heartLost = false; if (this.endless) this.endRun.cont++; this.state = 'playing'; this.movesLeft += CFG.CONTINUE_MOVES; UI.closeModal(); UI.hud(); }
   onWin() {
     if (this.mode === 'demo') { setTimeout(() => { if (this.mode === 'demo') this.startDemo(); }, 1600); return; }
     const st = this.starsAt(this.used);
@@ -2395,6 +2565,19 @@ class Game {
     setTimeout(() => { if (this.L !== L) return; this.rings.push({ x: c0.x, y: c0.y, r: 0, life: 1, col: th.c, big: true }); this.flash = .5; this.shake = .35; }, 140 * L.targets.length);
   }
   onLose() {
+    this.fails = (this.fails || 0) + 1; this.nearMiss = 0;
+    if (this.L) {
+      const L = this.L; L.soff = this.off;
+      const sol = solveFrom(L, this.rots, this.em, this.dead, this.off, this.frozen(), 2);
+      if (sol && sol.min >= 1 && sol.min <= 2) {
+        this.nearMiss = sol.min;
+        let cell = -1;
+        for (let i = 0; i < L.mirrors.length; i++) if (!L.mirrors[i].locked && sol.rots[i] !== this.rots[i]) { cell = L.mirrors[i].id; break; }
+        if (cell < 0 && sol.em !== this.em) { const e = L.emitters[sol.em]; cell = e.y * L.cols + e.x; }
+        if (cell < 0 && L.srow >= 0 && sol.off !== this.off) cell = L.srow * L.cols + Math.floor(L.cols / 2);
+        if (cell >= 0) { this.hintCell = cell; this.hintUntil = performance.now() + 6600; }
+      }
+    }
     if (this.mode === 'normal') {
       const kept = this.shield && (heartsOn() || S.streak > 0);   // shield: saves a heart, or (no hearts) keeps the win streak alive
       if (this.shield) { this.shield = false; if (kept) setTimeout(() => toast(t(heartsOn() ? 'shieldSaved' : 'shieldStreak'), 2600), 300); } else if (heartsOn()) { loseHeart(); this.heartLost = true; }
@@ -2402,7 +2585,7 @@ class Game {
       if (!kept || heartsOn()) S.streak = 0; this.failRow = (this.failRow || 0) + 1;
     }
     persist(); sound.lose(); Music.duck(1500); this.shake = .6; vib(120);
-    Analytics.track('level_fail', { n: this.n, fails: S.fails[this.n] || 0, mode: this.mode });
+    Analytics.track('level_fail', { n: this.n, fails: S.fails[this.n] || 0, mode: this.mode, nearMiss: this.nearMiss });
     this.say('lumiLose');
     if (this.endless) { submitScore('endless', this.endRun.k); UI.endlessOver(); return; }
     UI.lose();
@@ -2419,6 +2602,13 @@ class Game {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * 6.283, s = (shard ? 1.5 : 1) + Math.random() * (shard ? 5 : 4);
       this.particles.push({ x: p.x, y: p.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - (shard ? 1 : 0), life: 1, decay: .015 + Math.random() * .02, color: Math.random() > .4 ? color : '#fff', size: shard ? 2 + Math.random() * 4 : 1.5 + Math.random() * 3, shard: !!shard, g: shard ? .18 : 0 });
+    }
+  }
+  refractBurst(id, dx, dy, color, n) {   // directional spray of specular light streaks on mirror bounce / splitter / filter
+    const p = this.cpx(id), baseA = Math.atan2(dy || 0, dx || 1);
+    for (let i = 0; i < n; i++) {
+      const a = baseA + (Math.random() - .5) * 1.35, s = 1.8 + Math.random() * 3.4;
+      this.particles.push({ x: p.x, y: p.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: .95, decay: .032 + Math.random() * .025, color: i % 3 === 0 ? '#ffffff' : color, size: 1.4 + Math.random() * 1.8, streak: true, g: 0 });
     }
   }
   perfCheck(dt, onT) {      // slow device? switch to lite mode once (lower resolution, no canvas shadows) and remember it
@@ -2461,9 +2651,10 @@ class Game {
     this.render(now);
   }
   isBusy(now) {       // something on the board moves fast enough to need 60 fps
-    if (this.particles.length || this.rings.length || (this.floats && this.floats.length) || this.shake > 0 || this.flash > 0 || this.punch || this.pending) return true;
+    if (this.particles.length || this.rings.length || (this.floats && this.floats.length) || this.shake > 0 || this.flash > 0 || this.punch || this.pending || this.press) return true;
     if (this.beamBusy() || now < (this.introAt || 0) + 1200 || now < this.hintUntil || (this.offA !== this.offT)) return true;
     if (this.mA) for (let i = 0; i < this.mA.length; i++) if (this.mA[i] !== this.mT[i]) return true;
+    if (this.mHitAt) for (let i = 0; i < this.mHitAt.length; i++) if (this.mHitAt[i] && now - this.mHitAt[i] < 360) return true;
     if (this.linkFlash && now - this.linkFlash.t < 500) return true;
     return this.state === 'won' || (this.gfx && this.gfx.shineAt);
   }
@@ -2638,15 +2829,15 @@ class Game {
       }); }
     // mirrors (rotate smoothly, framed)
     L.mirrors.forEach((m, i) => {
-      const p = this.cpx(m.id), h = cs * .34, ice = m.y === L.srow, lk = m.locked && !ice, d = Math.abs(this.mT[i] - this.mA[i]), pop = 1 + Math.min(.1, d * .1), fr = h + 4;
+      const p = this.cpx(m.id), h = cs * .34, ice = m.y === L.srow, lk = m.locked && !ice, d = Math.abs(this.mT[i] - this.mA[i]), pressed = this.press && this.press.id === m.id && !lk && !ice && !this.dead[i], hitFl = this.mHitAt && this.mHitAt[i] ? Math.max(0, 1 - (now - this.mHitAt[i]) / 360) : 0, pop = pressed ? .91 : 1 + Math.min(.1, d * .1) + hitFl * .045, fr = h + 4;
       if (this.dead[i]) {
         c.save(); c.translate(p.x, p.y); c.fillStyle = '#0b0f19'; c.strokeStyle = 'rgba(244,63,94,.35)'; c.lineWidth = 1.5; this.rr(c, -fr, -fr, fr * 2, fr * 2, 10); c.fill(); c.stroke();
         c.strokeStyle = 'rgba(244,63,94,.5)'; c.lineWidth = 2; c.beginPath(); c.moveTo(-h * .6, -h * .3); c.lineTo(-h * .1, 0); c.lineTo(-h * .4, h * .5); c.moveTo(h * .1, -h * .5); c.lineTo(h * .3, h * .1); c.lineTo(h * .7, h * .4); c.stroke(); c.restore(); return;
       }
       c.save(); this.pz(c, p, m.id, now); if (m.y === L.srow) this.rowClip(c, L); c.translate(p.x, p.y); c.scale(pop, pop);
       const g = c.createLinearGradient(0, -fr, 0, fr);
-      if (lk) { g.addColorStop(0, 'rgba(244,63,94,.24)'); g.addColorStop(1, 'rgba(244,63,94,.06)'); } else { g.addColorStop(0, 'rgba(255,255,255,.13)'); g.addColorStop(1, 'rgba(255,255,255,.03)'); }
-      c.fillStyle = g; c.strokeStyle = lk ? 'rgba(244,63,94,.7)' : ice ? 'rgba(186,230,253,.7)' : (m.tri ? 'rgba(253,230,138,.55)' : 'rgba(' + th.rgb + ',.38)'); c.lineWidth = 1.5;
+      if (lk) { g.addColorStop(0, 'rgba(244,63,94,.24)'); g.addColorStop(1, 'rgba(244,63,94,.06)'); } else { g.addColorStop(0, 'rgba(255,255,255,' + (.13 + hitFl * .15) + ')'); g.addColorStop(1, 'rgba(255,255,255,.03)'); }
+      c.fillStyle = g; c.strokeStyle = lk ? 'rgba(244,63,94,.7)' : ice ? 'rgba(186,230,253,.7)' : (m.tri ? 'rgba(253,230,138,.55)' : 'rgba(' + th.rgb + ',' + (.38 + hitFl * .45) + ')'); c.lineWidth = 1.5 + hitFl * .8;
       this.rr(c, -fr, -fr, fr * 2, fr * 2, 10); c.fill(); c.stroke();
       const col = lk ? '#fb7185' : (m.tri ? '#fde68a' : '#fff'), off = m.tri && this.rots[i] === 2;
       c.save(); c.rotate(this.mA[i]); c.lineCap = 'round'; const len = h * 1.2;
@@ -2655,8 +2846,9 @@ class Game {
         const w = Math.max(4, cs * .075), tint = lk ? '251,113,133' : ice ? '186,230,253' : (m.tri ? '253,230,138' : th.rgb);
         c.strokeStyle = 'rgba(0,0,0,.55)'; c.lineWidth = w + 3; c.beginPath(); c.moveTo(-len, 1.2); c.lineTo(len, 1.2); c.stroke();
         const gr = c.createLinearGradient(-len, 0, len, 0); gr.addColorStop(0, 'rgba(' + tint + ',.75)'); gr.addColorStop(.5, '#ffffff'); gr.addColorStop(1, 'rgba(' + tint + ',.75)');
-        c.strokeStyle = 'rgba(' + tint + ',.16)'; c.lineWidth = w + 9; c.beginPath(); c.moveTo(-len, 0); c.lineTo(len, 0); c.stroke();   // soft glow as a wide faint stroke (a canvas shadow per mirror per frame was costly)
+        c.strokeStyle = 'rgba(' + tint + ',' + (.16 + hitFl * .32) + ')'; c.lineWidth = w + 9 + hitFl * 6; c.beginPath(); c.moveTo(-len, 0); c.lineTo(len, 0); c.stroke();   // soft glow as a wide faint stroke (a canvas shadow per mirror per frame was costly)
         c.strokeStyle = gr; c.lineWidth = w; c.beginPath(); c.moveTo(-len, 0); c.lineTo(len, 0); c.stroke();
+        if (hitFl > 0) { c.globalCompositeOperation = 'lighter'; c.strokeStyle = 'rgba(255,255,255,' + (hitFl * .85) + ')'; c.lineWidth = w * .75; c.beginPath(); c.moveTo(-len * .85, 0); c.lineTo(len * .85, 0); c.stroke(); }
         const gp = ((now / 2400 + i * .37) % 1.7) - .35;
         if (gp >= 0 && gp <= 1) { const gx = -len + gp * 2 * len, R = w * 2.4, gg = c.createRadialGradient(gx, 0, 0, gx, 0, R); gg.addColorStop(0, 'rgba(255,255,255,.95)'); gg.addColorStop(1, 'rgba(255,255,255,0)'); c.globalCompositeOperation = 'lighter'; c.fillStyle = gg; c.fillRect(gx - R, -R, R * 2, R * 2); }
       }
@@ -2683,15 +2875,18 @@ class Game {
     });
     // beam
     this.drawBeam(now);
-    // hint ring
+    // hint ring (single 1.4s pulse on hint, or repeating radar pulse on a near-miss Lose screen)
     if (now < this.hintUntil && this.hintCell >= 0) {
-      const p = this.cpx(this.hintCell), k = (this.hintUntil - now) / 1400;
-      c.save(); c.strokeStyle = 'rgba(251,191,36,' + k + ')'; c.lineWidth = 3; c.beginPath(); c.arc(p.x, p.y, cs * (.35 + (1 - k) * .3), 0, 6.283); c.stroke(); c.restore();
+      const p = this.cpx(this.hintCell), rem = this.hintUntil - now, k = rem > 1400 ? ((rem % 1100) / 1100) : (rem / 1400);
+      c.save(); c.strokeStyle = 'rgba(251,191,36,' + k + ')'; c.lineWidth = 3; c.beginPath(); c.arc(p.x, p.y, cs * (.35 + (1 - k) * .3), 0, 6.283); c.stroke();
+      if (rem > 1400) { c.strokeStyle = 'rgba(251,191,36,' + (.45 + .35 * Math.sin(now / 150)) + ')'; c.lineWidth = 2.2; c.setLineDash([5, 4]); c.beginPath(); c.arc(p.x, p.y, cs * .38, 0, 6.283); c.stroke(); }
+      c.restore();
     }
     // particles
     for (const p of this.particles) {
       c.save(); c.globalAlpha = Math.max(0, p.life); c.fillStyle = p.color;
-      if (p.shard) { c.translate(p.x, p.y); c.rotate(p.life * 6); c.fillRect(-p.size, -p.size / 2, p.size * 2, p.size); }
+      if (p.streak) { c.globalCompositeOperation = 'lighter'; c.strokeStyle = p.color; c.lineWidth = p.size; c.lineCap = 'round'; c.beginPath(); c.moveTo(p.x - p.vx * 2.2, p.y - p.vy * 2.2); c.lineTo(p.x + p.vx * 1.1, p.y + p.vy * 1.1); c.stroke(); }
+      else if (p.shard) { c.translate(p.x, p.y); c.rotate(p.life * 6); c.fillRect(-p.size, -p.size / 2, p.size * 2, p.size); }
       else { c.beginPath(); c.arc(p.x, p.y, p.size, 0, 6.283); c.fill(); }
       c.restore();
     }
@@ -2932,41 +3127,64 @@ class Game {
   }
   drawBeam(now) {
     const c = this.ctx, cs = this.cs, ox = this.ox, oy = this.oy, paths = this.res.r.paths, L = this.L;
-    const shimmer = .85 + .15 * Math.sin(now / 120), orbs = S.beam !== 'line', round = !orbs, th = this.skinTheme(), cm = L.colorMode;
+    const shimmer = .85 + .15 * Math.sin(now / 120), corePulse = .88 + .12 * Math.sin(now / 55), orbs = S.beam !== 'line', round = !orbs, th = this.skinTheme(), cm = L.colorMode;
     const sty = col => cm ? { rgb: BCOL[col].join(','), c: bcss(col), mid: bcss(col, .9), light: bcss(col, 1) } : th;
-    const runs = [], heads = [];
+    const runs = [], heads = [], cellHits = new Map();
+    const markCell = p => {
+      if (p.x >= 0 && p.y >= 0 && p.x < L.cols && p.y < L.rows && p.x === Math.round(p.x) && p.y === Math.round(p.y)) {
+        const id = p.y * L.cols + p.x; cellHits.set(id, (cellHits.get(id) || 0) + 1);
+      }
+    };
     for (let pi = 0; pi < paths.length; pi++) {
       const path = paths[pi]; let rem = this.bp && this.bp.length === paths.length ? this.bp[pi] : this.beamLen, prev = null, cur = null, cut = false;
       for (const p of path) {
         const X = ox + (p.x + .5) * cs, Y = oy + (p.y + .5) * cs;
-        if (!prev || p.jump) { cur = { col: p.col, pts: [{ X, Y }] }; runs.push(cur); prev = p; continue; }
+        if (!prev || p.jump) { cur = { col: p.col, pts: [{ X, Y }] }; runs.push(cur); prev = p; markCell(p); continue; }
         if (cur.col !== prev.col) { const lp = cur.pts[cur.pts.length - 1]; cur = { col: prev.col, pts: [lp] }; runs.push(cur); }
         const seg = Math.hypot(p.x - prev.x, p.y - prev.y);
-        if (rem >= seg) { cur.pts.push({ X, Y }); rem -= seg; prev = p; }
+        if (rem >= seg) { cur.pts.push({ X, Y }); rem -= seg; prev = p; markCell(p); }
         else { const f = rem / seg; cur.pts.push({ X: ox + (prev.x + (p.x - prev.x) * f + .5) * cs, Y: oy + (prev.y + (p.y - prev.y) * f + .5) * cs }); cut = true; break; }
       }
       if (cut) { const q = cur.pts[cur.pts.length - 1]; heads.push({ X: q.X, Y: q.Y, col: cur.col }); }
     }
-    const stroke = pts => {
-      c.beginPath(); c.moveTo(pts[0].X, pts[0].Y);
+    const stroke = (pts, oxOff = 0, oyOff = 0) => {
+      c.beginPath(); c.moveTo(pts[0].X + oxOff, pts[0].Y + oyOff);
       for (let k = 1; k < pts.length - 1; k++) {
         const a = pts[k - 1], b = pts[k], d = pts[k + 1];
         const r = round ? Math.min(cs * .24, Math.hypot(b.X - a.X, b.Y - a.Y) / 2, Math.hypot(d.X - b.X, d.Y - b.Y) / 2) : 0;
-        if (r > .5) c.arcTo(b.X, b.Y, d.X, d.Y, r); else c.lineTo(b.X, b.Y);
+        if (r > .5) c.arcTo(b.X + oxOff, b.Y + oyOff, d.X + oxOff, d.Y + oyOff, r); else c.lineTo(b.X + oxOff, b.Y + oyOff);
       }
-      if (pts.length > 1) { const l = pts[pts.length - 1]; c.lineTo(l.X, l.Y); }
+      if (pts.length > 1) { const l = pts[pts.length - 1]; c.lineTo(l.X + oxOff, l.Y + oyOff); }
       c.stroke();
     };
-    for (let pass = 0; pass < 2; pass++) {
-      c.save(); c.lineCap = 'round'; c.lineJoin = 'round'; if (pass === 0) c.globalCompositeOperation = 'lighter';
+    // 3-pass HDR optical beam: Pass 0 = atmospheric halo + chromatic dispersion fringe, Pass 1 = saturated plasma sheath, Pass 2 = incandescent white-hot core
+    for (let pass = 0; pass < 3; pass++) {
+      c.save(); c.lineCap = 'round'; c.lineJoin = 'round'; if (pass !== 1) c.globalCompositeOperation = 'lighter';
       for (const r of runs) {
+        if (r.pts.length < 2) continue;
         const st = sty(r.col); c.save();
-        if (orbs) {
-          if (pass === 0) { c.strokeStyle = th.rainbow && !cm ? st.c : 'rgba(' + st.rgb + ',' + (.11 * shimmer) + ')'; c.globalAlpha = th.rainbow && !cm ? .12 : 1; c.lineWidth = cs * .16; }
-          else { c.globalAlpha = .55; c.strokeStyle = st.mid; c.lineWidth = Math.max(1.5, cs * .035); c.shadowColor = st.c; c.shadowBlur = 6; }
-        } else if (pass === 0) { c.strokeStyle = th.rainbow && !cm ? st.c : 'rgba(' + st.rgb + ',' + (.22 * shimmer) + ')'; c.globalAlpha = th.rainbow && !cm ? .22 : 1; c.lineWidth = cs * .22; }
-        else { c.strokeStyle = st.light; c.lineWidth = Math.max(2.5, cs * .075); c.shadowColor = st.c; c.shadowBlur = 14; }
-        if (r.pts.length > 1) stroke(r.pts); c.restore();
+        if (pass === 0) {
+          c.strokeStyle = th.rainbow && !cm ? st.c : 'rgba(' + st.rgb + ',' + ((orbs ? .12 : .24) * shimmer) + ')';
+          c.globalAlpha = th.rainbow && !cm ? (orbs ? .13 : .24) : 1;
+          c.lineWidth = cs * (orbs ? .17 : .25);
+          stroke(r.pts);
+          if (!PERF.lite && !cm) {
+            const ab = orbs ? .07 : .12;
+            c.lineWidth = Math.max(1.2, cs * (orbs ? .032 : .055));
+            c.strokeStyle = 'rgba(34,211,238,' + (ab * shimmer) + ')'; stroke(r.pts, -1.35, -1.1);
+            c.strokeStyle = 'rgba(244,114,182,' + (ab * shimmer) + ')'; stroke(r.pts, 1.35, 1.1);
+          }
+        } else if (pass === 1) {
+          if (orbs) { c.globalAlpha = .62; c.strokeStyle = st.mid; c.lineWidth = Math.max(1.6, cs * .042); c.shadowColor = st.c; c.shadowBlur = 6; }
+          else { c.strokeStyle = st.light; c.lineWidth = Math.max(2.6, cs * .082); c.shadowColor = st.c; c.shadowBlur = 14; }
+          stroke(r.pts);
+        } else {
+          c.globalAlpha = (orbs ? .68 : .92) * corePulse;
+          c.strokeStyle = '#ffffff';
+          c.lineWidth = Math.max(orbs ? 1.1 : 1.5, cs * (orbs ? .02 : .032));
+          stroke(r.pts);
+        }
+        c.restore();
       }
       c.restore();
     }
@@ -2976,13 +3194,30 @@ class Game {
       for (let k = 1; k < r.pts.length - 1; k++) {
         const a = r.pts[k - 1], b = r.pts[k], d = r.pts[k + 1];
         if (Math.abs((b.X - a.X) * (d.Y - b.Y) - (b.Y - a.Y) * (d.X - b.X)) < 1) continue;
-        const pu = .75 + .25 * Math.sin(now / 170 + k * 1.3), R = cs * .36, g = c.createRadialGradient(b.X, b.Y, 0, b.X, b.Y, R);
-        g.addColorStop(0, 'rgba(255,255,255,' + (.5 * pu) + ')'); g.addColorStop(.35, 'rgba(' + st.rgb + ',' + (.26 * pu) + ')'); g.addColorStop(1, 'rgba(' + st.rgb + ',0)');
+        const pu = .75 + .25 * Math.sin(now / 170 + k * 1.3), R = cs * .38, g = c.createRadialGradient(b.X, b.Y, 0, b.X, b.Y, R);
+        g.addColorStop(0, 'rgba(255,255,255,' + (.58 * pu) + ')'); g.addColorStop(.35, 'rgba(' + st.rgb + ',' + (.28 * pu) + ')'); g.addColorStop(1, 'rgba(' + st.rgb + ',0)');
         c.fillStyle = g; c.fillRect(b.X - R, b.Y - R, R * 2, R * 2);
-        c.save(); c.translate(b.X, b.Y); c.rotate(now / 900 + k); c.fillStyle = 'rgba(255,255,255,' + (.55 * pu) + ')'; const s1 = cs * .21 * pu, s2 = cs * .022;
+        c.save(); c.translate(b.X, b.Y); c.rotate(now / 900 + k); c.fillStyle = 'rgba(255,255,255,' + (.62 * pu) + ')'; const s1 = cs * .22 * pu, s2 = cs * .024;
         c.beginPath(); c.moveTo(0, -s1); c.lineTo(s2, 0); c.lineTo(0, s1); c.lineTo(-s2, 0); c.closePath(); c.moveTo(-s1, 0); c.lineTo(0, s2); c.lineTo(s1, 0); c.lineTo(0, -s2); c.closePath(); c.fill(); c.restore();
       }
     }
+    // optical interference nodes at perpendicular beam crossings & shared double-sided mirrors
+    cellHits.forEach((cnt, id) => {
+      if (cnt < 2) return;
+      const kd = L.kind[id]; if (kd !== K.EMPTY && kd !== K.MIRROR) return;
+      const X = ox + (id % L.cols + .5) * cs, Y = oy + (((id / L.cols) | 0) + .5) * cs;
+      const pu = .78 + .22 * Math.sin(now / 140 + id), R = cs * (kd === K.MIRROR ? .44 : .32);
+      const g = c.createRadialGradient(X, Y, 0, X, Y, R);
+      g.addColorStop(0, 'rgba(255,255,255,' + (.65 * pu) + ')'); g.addColorStop(.4, 'rgba(' + th.rgb + ',' + (.32 * pu) + ')'); g.addColorStop(1, 'rgba(' + th.rgb + ',0)');
+      c.fillStyle = g; c.fillRect(X - R, Y - R, R * 2, R * 2);
+      c.save(); c.translate(X, Y); c.rotate(-now / 650 + id);
+      c.strokeStyle = 'rgba(255,255,255,' + (.45 * pu) + ')'; c.lineWidth = 1.3;
+      c.beginPath(); c.arc(0, 0, cs * (kd === K.MIRROR ? .18 : .11) * pu, 0, 6.283); c.stroke();
+      const s1 = cs * (kd === K.MIRROR ? .26 : .19) * pu, s2 = cs * .022;
+      c.fillStyle = 'rgba(255,255,255,' + (.75 * pu) + ')';
+      c.beginPath(); c.moveTo(0, -s1); c.lineTo(s2, 0); c.lineTo(0, s1); c.lineTo(-s2, 0); c.closePath(); c.moveTo(-s1, 0); c.lineTo(0, s2); c.lineTo(s1, 0); c.lineTo(0, -s2); c.closePath(); c.fill();
+      c.restore();
+    });
     c.restore();
     if (orbs) {
       const segs = [];
@@ -3007,7 +3242,11 @@ class Game {
       }
       c.restore();
     }
-    for (const h of heads) { const st = sty(h.col); glowDot(c, h.X, h.Y, cs * .09, st.c, 18); }
+    for (const h of heads) {
+      const st = sty(h.col); glowDot(c, h.X, h.Y, cs * .095, st.c, 18);
+      c.save(); c.globalCompositeOperation = 'lighter'; c.translate(h.X, h.Y); c.fillStyle = 'rgba(255,255,255,.85)';
+      const fl = cs * .28; c.beginPath(); c.moveTo(-fl, 0); c.lineTo(0, -cs * .022); c.lineTo(fl, 0); c.lineTo(0, cs * .022); c.closePath(); c.fill(); c.restore();
+    }
   }
 }
 
@@ -3066,8 +3305,9 @@ const UI = {
     $('#pillMoves').classList.toggle('ok', g.movesLeft > g.L.slack);
     const st = g.starsAt(g.state === 'playing' ? g.used + 1 : g.used); $('#hudStars').textContent = '★'.repeat(st) + '☆'.repeat(3 - st);
     $('#lblTargets').textContent = t('targets'); $('#lblMoves').textContent = t('moves'); $('#lblUndo').textContent = t('undo'); $('#lblHint').textContent = t('hint');
-    $('#costUndo').textContent = S.tok.undo > 0 ? '🎟 ×' + S.tok.undo + ' ' + t('free') : CFG.UNDO_COST + ' ✦';
+    $('#costUndo').textContent = g.freeUndo > 0 ? t('free') : S.tok.undo > 0 ? '🎟 ×' + S.tok.undo + ' ' + t('free') : CFG.UNDO_COST + ' ✦';
     $('#costHint').textContent = S.tok.hint > 0 ? '🎟 ×' + S.tok.hint + ' ' + t('free') : CFG.HINT_COST + ' ✦';
+    const br = $('#btnReset'); if (br) br.classList.toggle('dis', g.state !== 'playing' || !g.used);
     $('#pillStreak').style.display = S.streak >= 2 ? 'flex' : 'none'; $('#hudStreak').textContent = '×' + S.streak;
     if (g.daily) $('#hudLevel').textContent = '☀';
     if (g.mode === 'weekly') $('#hudLevel').textContent = '🗓';
@@ -3166,8 +3406,10 @@ const UI = {
     }
   },
   lose() {
-    const cc = game.contCost(), can = S.gems >= cc;
-    this.open('<div class="badge bad">!</div><h2>' + t('failTitle') + '</h2><p>' + t('failSub') + '<br><b style="color:#fb7185">' + (game.mode === 'normal' && game.heartLost ? t('lostHeart') : '') + '</b></p>' +
+    const cc = game.contCost(), can = S.gems >= cc, nm = game.nearMiss || 0;
+    const nmHtml = nm > 0 ? '<div class="line" style="color:var(--am);border-color:rgba(251,191,36,.38);background:rgba(251,191,36,.12)">🎯 <b>' + t(nm === 1 ? 'nearMiss1' : 'nearMiss2', { n: nm }) + '</b></div>' : '';
+    this.open('<div class="badge bad">!</div><h2>' + (nm === 1 ? t('chLose') : t('failTitle')) + '</h2><p>' + t('failSub') + '<br><b style="color:#fb7185">' + (game.mode === 'normal' && game.heartLost ? t('lostHeart') : '') + '</b></p>' +
+      nmHtml +
       '<button class="btn gold ' + (can ? '' : 'dis') + '" data-act="contGems">' + t('contGems', { m: CFG.CONTINUE_MOVES, c: cc }) + '</button>' +
       (adReady('continue') ? '<button class="btn primary pulse" data-act="contAd">' + t('contAd', { m: CFG.CONTINUE_MOVES }) + '</button>' : '') +
       (adReady('skip_level') && game.mode === 'normal' && (S.fails[game.n] || 0) >= CFG.SKIP_AFTER_FAILS && game.n === S.highest ? '<button class="btn" data-act="skipAd">' + t('skip') + '</button>' : '') +
@@ -3329,7 +3571,7 @@ const UI = {
     }
     const fx = $('#wmFx'); fx.style.setProperty('--wr', cth.rgb); if (fx.children.length !== 16) { let f = ''; for (let i = 0; i < 16; i++) f += '<i style="left:' + Math.round(Math.random() * 100) + '%;top:' + Math.round(20 + Math.random() * 80) + '%;--d:' + (7 + Math.random() * 8).toFixed(1) + 's;--dl:-' + (Math.random() * 12).toFixed(1) + 's;--dx:' + Math.round(-30 + Math.random() * 60) + 'px"></i>'; fx.innerHTML = f; }
     const total = Object.values(S.stars).reduce((a, b) => a + b, 0), gold = Object.keys(S.gold).length;
-    $('#wmTitle').textContent = t('mapTitle'); $('#wmStats').textContent = '★ ' + total + (gold ? '  ✨ ' + gold : ''); $('#wmCur').innerHTML = ic('play') + esc(t('lvl')) + ' ' + cur;
+    $('#wmTitle').textContent = t('mapTitle'); $('#wmStats').textContent = '★ ' + total + (gold ? '  ✨ ' + gold : ''); $('#wmCur').innerHTML = ic('play') + esc(t('level')) + ' ' + cur;
     el.classList.add('show'); el.setAttribute('dir', 'ltr');
     const sc = $('#wmScroll'), far = el.querySelector('.wm-far');
     if (!sc._px) { sc._px = 1; let tk = 0; sc.addEventListener('scroll', () => { if (tk) return; tk = requestAnimationFrame(() => { tk = 0; far.style.transform = 'translateY(' + (-(sc.scrollTop * .12) % 300) + 'px)'; }); }, { passive: true }); }
@@ -3649,6 +3891,7 @@ $('#wmap').addEventListener('click', e => { const b = e.target.closest('[data-ac
 $('#btnShop').addEventListener('click', () => UI.shop());
 $('#btnHearts').addEventListener('click', () => { tickHearts(); if (S.hearts < CFG.MAX_HEARTS) { UI.noHearts(game.n); } else toast('♥ ' + S.hearts + '/' + CFG.MAX_HEARTS); });
 $('#btnSettings').addEventListener('click', () => UI.settings());
+$('#btnReset').addEventListener('click', () => game.resetBoard());
 $('#btnUndo').addEventListener('click', () => game.doUndo());
 $('#btnHint').addEventListener('click', () => game.doHint());
 document.body.addEventListener('touchmove', e => { if (!e.target.closest('.card, .wm-scroll, .tcontent')) e.preventDefault(); }, { passive: false });   // block page rubber-banding, but let cards and the world map scroll with a finger
