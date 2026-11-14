@@ -3595,10 +3595,22 @@ const UI = {
     }
     this.open('<h2>' + t('chooseLevel') + '</h2><p>' + worldLabel(s) + '<br>' + s + ' – ' + (s + per - 1) + '</p><div class="grid">' + cells + '</div><div class="row"><button class="btn ' + (p ? '' : 'dis') + '" data-act="mapPrev">‹</button><button class="btn primary" data-act="goCur">' + t('current') + '</button><button class="btn ' + (p < maxPage ? '' : 'dis') + '" data-act="mapNext">›</button></div><button class="btn gold" data-act="dailyGo">' + t('dcBtn') + (S.dc.day === dayNum() ? ' ✓' : '') + '</button><button class="btn" data-act="close">' + t('close') + '</button>');
   },
-  testAdsTap() {
-    const B = window.PNBridge; if (!B || !B.setTestAds) return;
+  testAdsTap() {     // 7 quick taps on the Settings title: the review / developer panel (App Review notes describe this)
     this._ta = (this._ta || 0) + 1; clearTimeout(this._taT); this._taT = setTimeout(() => { this._ta = 0; }, 2500);
-    if (this._ta >= 7) { this._ta = 0; const on = !B.testAds(); B.setTestAds(on); toast(on ? '🧪 Google test ads ON — reopen the app' : 'Test ads OFF — reopen the app', 4000); }
+    if (this._ta >= 7) { this._ta = 0; this.devPanel(); }
+  },
+  devPanel() {
+    const B = window.PNBridge, ads = B && B.setTestAds;
+    this.open('<h2>Review tools</h2><p>Opens every level and mode so later mechanics can be checked quickly. Progress is only changed on this device.</p>' +
+      '<button class="btn primary" data-act="devUnlock">Unlock all levels</button>' +
+      (ads ? '<button class="btn" data-act="devAds">' + (B.testAds() ? 'Google test ads: on' : 'Google test ads: off') + '</button>' : '') +
+      '<button class="btn" data-act="close">' + t('close') + '</button>');
+  },
+  devUnlock() {
+    S.highest = Math.max(S.highest || 1, 300);
+    if (S.tr && S.tr[1]) S.tr[1].k = Math.max(S.tr[1].k || 0, CFG.EXTREME_AFTER + 1);
+    if (S.tr && S.tr[2]) S.tr[2].k = Math.max(S.tr[2].k || 0, 1);
+    persist(); this.closeModal(); toast('All levels and modes unlocked', 2600); if (onTitle()) renderTitle();
   },
   settings() {
     this.open('<h2 data-act="testAds">' + t('settings') + (window.PNBridge && window.PNBridge.testAds && window.PNBridge.testAds() ? ' 🧪' : '') + '</h2><div class="opt"><span>' + t('music') + ' <small style="color:var(--mut)">' + Music.WORLDS[Music.world].hz + ' Hz</small></span><div class="seg"><button data-act="mus" data-v="1" class="' + (S.music ? 'on' : '') + '">' + t('on') + '</button><button data-act="mus" data-v="0" class="' + (!S.music ? 'on' : '') + '">' + t('off') + '</button></div></div><div class="opt"><span>' + t('sound') + '</span><div class="seg"><button data-act="snd" data-v="1" class="' + (S.sound ? 'on' : '') + '">' + t('on') + '</button><button data-act="snd" data-v="0" class="' + (!S.sound ? 'on' : '') + '">' + t('off') + '</button></div></div>' +
@@ -3772,6 +3784,8 @@ const UI = {
       case 'share': this.share(); break;
       case 'shareLink': this.shareLink(); break;
       case 'testAds': this.testAdsTap(); break;
+      case 'devUnlock': this.devUnlock(); break;
+      case 'devAds': { const B = window.PNBridge; if (B && B.setTestAds) { const on = !B.testAds(); B.setTestAds(on); toast(on ? '🧪 Google test ads ON — reopen the app' : 'Test ads OFF — reopen the app', 4000); } this.closeModal(); break; }
       case 'evClaim': { const e = ensureEvent(), i = +el.dataset.i; if (e.tok < CFG.EVENT_GOALS[i] || e.got.includes(i)) break; e.got.push(i);
         if (i === 0) S.gems += 100; else if (i === 1) ['moves', 'reveal', 'shield'].forEach(k => { S.tok[k] = (S.tok[k] || 0) + 2; }); else { const id = 'ev-' + EVENT.id; if (!S.skins.includes(id)) S.skins.push(id); S.skin = id; }
         persist(); sound.star(i); this.hud(); this.eventInfo(); break; }
